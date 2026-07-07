@@ -1,10 +1,11 @@
 from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "EduLeague Knowledge Builder"
-    app_version: str = "0.1.0"
+    app_version: str = "1.0.0"
     debug: bool = True
 
     base_dir: Path = Path(__file__).resolve().parents[2]
@@ -18,6 +19,11 @@ class Settings(BaseSettings):
     min_text_chars_for_valid_page: int = 30
 
     default_language: str = "fa"
+
+    # OCR
+    ocr_enabled: bool = True
+    ocr_language: str = "fas"
+    ocr_render_resolution: int = 200
 
     model_config = SettingsConfigDict(
         env_file=".env",

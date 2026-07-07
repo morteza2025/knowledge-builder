@@ -1,14 +1,26 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes import router
 from app.core.settings import settings
-from app.core.logger import app_logger
-
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     debug=settings.debug,
+    description="Local Persian PDF processor for EduLeague's educational "
+    "knowledge pipeline (AI Teacher, AI Planner, and future services).",
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(router)
 
 
 @app.get("/")
@@ -17,16 +29,5 @@ def root():
         "ok": True,
         "service": settings.app_name,
         "version": settings.app_version,
-    }
-
-
-@app.get("/health")
-def health():
-    app_logger.info("Health check requested")
-
-    return {
-        "ok": True,
-        "input_dir": str(settings.input_dir),
-        "output_dir": str(settings.output_dir),
-        "log_dir": str(settings.log_dir),
+        "docs": "/docs",
     }

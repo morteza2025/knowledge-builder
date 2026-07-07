@@ -1,32 +1,34 @@
-import sys
-from loguru import logger
+import logging
+from logging.handlers import RotatingFileHandler
 
 from app.core.settings import settings
 
+LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
-def setup_logger():
-    logger.remove()
 
-    logger.add(
-        sys.stdout,
-        level="DEBUG" if settings.debug else "INFO",
-        colorize=True,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-               "<level>{level}</level> | "
-               "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-               "<level>{message}</level>",
+def _build_logger() -> logging.Logger:
+    logger = logging.getLogger("knowledge_builder")
+    logger.setLevel(logging.DEBUG if settings.debug else logging.INFO)
+
+    if logger.handlers:
+        # Avoid duplicate handlers if this module is imported more than once
+        # (e.g. by both the API process and a test runner).
+        return logger
+
+    formatter = logging.Formatter(LOG_FORMAT)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    log_file = settings.log_dir / "knowledge-builder.log"
+    file_handler = RotatingFileHandler(
+        log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
-
-    logger.add(
-        settings.log_dir / "knowledge-builder.log",
-        level="INFO",
-        rotation="10 MB",
-        retention="14 days",
-        encoding="utf-8",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}",
-    )
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
 
     return logger
 
 
-app_logger = setup_logger()
+app_logger = _build_logger()

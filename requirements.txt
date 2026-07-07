@@ -1,0 +1,23 @@
+# --- API framework ---
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+
+# --- Domain / validation ---
+pydantic>=2.7
+pydantic-settings>=2.3
+
+# --- PDF extraction ---
+# pdfplumber is the ONLY supported text-extraction engine. Do not switch back
+# to PyMuPDF's page.get_text("text") — it was verified to scramble Persian
+# word and character order (see app/infrastructure/pdf/pdfplumber_engine.py).
+pdfplumber>=0.11
+
+# --- OCR fallback (optional at runtime, but required for the OCR fallback
+# to actually work — see README.md "OCR setup") ---
+pytesseract>=0.3.10
+pillow>=10.0
+
+# --- Testing ---
+pytest>=8.0
+httpx>=0.27

@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+.env
+
+logs/*.log
+
+# Generated outputs — reproducible from input/ + code, don't need to be
+# committed. Remove this if you'd rather track outputs for review/diffing.
+outputs/json/*
+outputs/markdown/*
+!outputs/json/.gitkeep
+!outputs/markdown/.gitkeep
+
+# Large source PDFs don't belong in git history. Keep them in input/ locally
+# or fetch from Drive at run time; commit only the small sample used by tests.
+input/*
+!input/C110220.pdf
+!input/.gitkeep
+
+.vscode/
+.idea/
+*.egg-info/
