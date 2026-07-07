@@ -2,7 +2,42 @@ from pathlib import Path
 
 from app.application.ports import ExporterPort
 from app.core.settings import settings
-from app.domain.document import KnowledgeDocument
+from app.domain.document import BlockType, DocumentPage, KnowledgeDocument
+
+
+def _render_table_block(rows: list[list[str]]) -> str:
+    if not rows:
+        return ""
+
+    col_count = max(len(row) for row in rows)
+    normalized = [row + [""] * (col_count - len(row)) for row in rows]
+
+    def render_row(row: list[str]) -> str:
+        cells = [cell.replace("\n", " ").replace("|", "\\|") or " " for cell in row]
+        return "| " + " | ".join(cells) + " |"
+
+    lines = [render_row(normalized[0]), "|" + " --- |" * col_count]
+    lines.extend(render_row(row) for row in normalized[1:])
+
+    return "\n".join(lines)
+
+
+def _render_page_blocks(page: DocumentPage) -> str:
+    parts = []
+
+    for block in page.blocks:
+        if block.type == BlockType.heading:
+            parts.append(f"### {block.text}\n")
+        elif block.type == BlockType.table:
+            rows = block.metadata.get("rows")
+            if rows:
+                parts.append(_render_table_block(rows) + "\n")
+            else:
+                parts.append(block.text + "\n")
+        else:
+            parts.append(block.text + "\n")
+
+    return "\n".join(parts)
 
 
 class MarkdownExporter(ExporterPort):
@@ -43,7 +78,10 @@ class MarkdownExporter(ExporterPort):
                         file.write(f"- {warning}\n")
                     file.write("\n")
 
-                if page.text:
+                if page.blocks:
+                    file.write(_render_page_blocks(page))
+                    file.write("\n\n")
+                elif page.text:
                     file.write(page.text)
                     file.write("\n\n")
                 else:

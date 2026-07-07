@@ -4,9 +4,9 @@ pdfplumber.
 
 Replaces the previous PyMuPDF-based extractor (`page.get_text("text")`),
 which was verified to produce word-order- and character-order-scrambled
-Persian text (see git history / prior code review). See
-app/infrastructure/text/persian_cleaner.py for why the RTL fix needs two
-axes, not one.
+Persian text. See app/infrastructure/text/persian_cleaner.py for why the
+RTL fix needs two axes, not one, and app/infrastructure/pdf/structure_analyzer.py
+for how headings/tables are detected on top of the fixed text.
 """
 
 from pathlib import Path
@@ -18,35 +18,14 @@ from app.application.ports import OCREnginePort, TextExtractionPort
 from app.core.exceptions import PDFExtractionError, UnsupportedFileTypeError
 from app.core.logger import app_logger
 from app.core.settings import settings
-from app.domain.document import DocumentPage, ExtractionMethod
-from app.infrastructure.text.persian_cleaner import (
-    clean_persian_text,
-    fix_word_glyph_order,
+from app.domain.document import BlockType, DocumentBlock, DocumentPage, ExtractionMethod
+from app.infrastructure.pdf.structure_analyzer import (
+    LineInfo,
+    build_page_blocks,
+    compute_document_baseline_size,
+    extract_lines_with_style,
 )
-
-_LINE_BAND_PX = 3  # words within this many points of `top` are one line
-
-
-def _reconstruct_page_text(page: "pdfplumber.page.Page") -> str:
-    """The verified fix: group words into lines by vertical position, sort
-    each line right-to-left by x0, and un-mirror each Arabic-script word."""
-
-    words = page.extract_words(use_text_flow=False)
-    if not words:
-        return ""
-
-    lines: dict[int, list] = {}
-    for word in words:
-        line_key = round(word["top"] / _LINE_BAND_PX) * _LINE_BAND_PX
-        lines.setdefault(line_key, []).append(word)
-
-    text_lines = []
-    for line_key in sorted(lines.keys()):
-        line_words = sorted(lines[line_key], key=lambda w: -w["x0"])
-        line_text = " ".join(fix_word_glyph_order(w["text"]) for w in line_words)
-        text_lines.append(line_text)
-
-    return "\n".join(text_lines)
+from app.infrastructure.text.persian_cleaner import clean_persian_text
 
 
 class PdfPlumberTextExtractor(TextExtractionPort):
@@ -69,8 +48,6 @@ class PdfPlumberTextExtractor(TextExtractionPort):
     def extract_pages(self, pdf_path: Path) -> list[DocumentPage]:
         self._validate_path(pdf_path)
 
-        pages: list[DocumentPage] = []
-
         try:
             with pdfplumber.open(pdf_path) as pdf:
                 if len(pdf.pages) > self._max_pages:
@@ -79,8 +56,43 @@ class PdfPlumberTextExtractor(TextExtractionPort):
                         f"Max allowed: {self._max_pages}"
                     )
 
+                # Phase 1: extract styled lines for every page up front.
+                # Heading detection is relative to THIS document's own body
+                # font size (a photo-heavy book and a dense-text book have
+                # different baselines), so we need to see every page before
+                # classifying any single line.
+                pages_lines: dict[int, list[LineInfo]] = {}
                 for page_number, page in enumerate(pdf.pages, start=1):
-                    pages.append(self._extract_single_page(page, page_number))
+                    try:
+                        pages_lines[page_number] = extract_lines_with_style(
+                            page, page_number
+                        )
+                    except Exception as exc:
+                        app_logger.warning(
+                            "Style extraction failed on page %s: %s",
+                            page_number,
+                            exc,
+                        )
+                        pages_lines[page_number] = []
+
+                baseline_size = compute_document_baseline_size(
+                    list(pages_lines.values())
+                )
+
+                # Phase 2: build the final per-page result, now that the
+                # baseline is known. Still inside the same `with` block so
+                # page objects (needed for OCR image rendering and table
+                # cell cropping) stay valid.
+                pages: list[DocumentPage] = []
+                for page_number, page in enumerate(pdf.pages, start=1):
+                    pages.append(
+                        self._extract_single_page(
+                            page,
+                            page_number,
+                            pages_lines[page_number],
+                            baseline_size,
+                        )
+                    )
 
         except PDFExtractionError:
             raise
@@ -89,13 +101,20 @@ class PdfPlumberTextExtractor(TextExtractionPort):
 
         return pages
 
-    def _extract_single_page(self, page, page_number: int) -> DocumentPage:
+    def _extract_single_page(
+        self,
+        page,
+        page_number: int,
+        lines: list[LineInfo],
+        baseline_size: float,
+    ) -> DocumentPage:
         warnings: list[str] = []
         method = ExtractionMethod.pdfplumber_positional
         needs_review = False
+        blocks: list[DocumentBlock] = []
 
         try:
-            raw_text = _reconstruct_page_text(page)
+            raw_text = "\n".join(line.text for line in lines)
             cleaned = clean_persian_text(raw_text)
         except Exception as exc:
             app_logger.warning("Page %s extraction failed: %s", page_number, exc)
@@ -113,6 +132,28 @@ class PdfPlumberTextExtractor(TextExtractionPort):
             method = ExtractionMethod.empty
             needs_review = True
 
+        if method == ExtractionMethod.pdfplumber_positional:
+            try:
+                blocks = build_page_blocks(page, page_number, lines, baseline_size)
+            except Exception as exc:
+                app_logger.warning(
+                    "Block structuring failed on page %s: %s", page_number, exc
+                )
+                warnings.append(f"BLOCK_STRUCTURING_FAILED: {exc}")
+        elif method == ExtractionMethod.ocr_tesseract and cleaned:
+            # OCR gives plain text with no font/position data, so headings
+            # can't be classified — one block beats losing structure
+            # entirely.
+            blocks = [
+                DocumentBlock(
+                    id=f"{page_number}-1",
+                    type=BlockType.paragraph,
+                    text=cleaned,
+                    page=page_number,
+                    metadata={"source": "ocr_fallback"},
+                )
+            ]
+
         return DocumentPage(
             page_number=page_number,
             text=cleaned,
@@ -120,6 +161,7 @@ class PdfPlumberTextExtractor(TextExtractionPort):
             extraction_method=method,
             needs_review=needs_review,
             warnings=warnings,
+            blocks=blocks,
         )
 
     def _maybe_run_ocr(self, page, page_number, cleaned, method, warnings):
@@ -137,7 +179,12 @@ class PdfPlumberTextExtractor(TextExtractionPort):
 
             if len(ocr_cleaned) > len(cleaned):
                 warnings.append("RECOVERED_VIA_OCR")
-                return ocr_cleaned, ExtractionMethod.ocr_tesseract, warnings, len(ocr_cleaned) < self._min_chars
+                return (
+                    ocr_cleaned,
+                    ExtractionMethod.ocr_tesseract,
+                    warnings,
+                    len(ocr_cleaned) < self._min_chars,
+                )
 
         except Exception as exc:
             app_logger.warning("OCR failed on page %s: %s", page_number, exc)
@@ -150,4 +197,6 @@ class PdfPlumberTextExtractor(TextExtractionPort):
         if not pdf_path.exists():
             raise PDFExtractionError(f"File not found: {pdf_path}")
         if pdf_path.suffix.lower() != ".pdf":
-            raise UnsupportedFileTypeError(f"Only PDF files are supported: {pdf_path.suffix}")
+            raise UnsupportedFileTypeError(
+                f"Only PDF files are supported: {pdf_path.suffix}"
+            )

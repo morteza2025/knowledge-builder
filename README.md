@@ -129,12 +129,55 @@ pytest
 Note: the PDF-extraction regression tests run against the real
 152-page sample PDF in `input/`, so the full suite takes about a minute.
 
+## Structural block detection (headings + tables)
+
+Beyond flat page text, each `DocumentPage.blocks` now holds an ordered list
+of `heading` / `paragraph` / `table` blocks:
+
+- **Headings** are detected from font size relative to the document's own
+  body-text baseline (median size across the whole PDF, not a fixed number —
+  a photo-heavy book and a dense-text book have different baselines), plus
+  non-black ink color and bold font names as secondary signals. This is a
+  heuristic, not a semantic understanding of the text — section labels
+  styled only through spacing/context rather than typography (e.g. a
+  same-size-as-body label like "بخوانیم و بدانیم") won't be caught. Verified
+  against `input/C110220.pdf`: the 30pt cover title is correctly classified
+  as a heading against an ~11-12pt body baseline.
+
+- **Tables** come from `pdfplumber.page.find_tables()`, with each cell's
+  text reconstructed using the *same* RTL fix as body text — `Table.extract()`'s
+  built-in cell text is NOT RTL-safe and comes out word-order-scrambled
+  (verified: a raw cell string only reads correctly after the same
+  line-grouping + right-to-left sort + per-word character reversal used
+  everywhere else in this pipeline).
+
+  **Known limitation:** `find_tables()` detects any bordered/ruled region,
+  which on real textbook PDFs includes decorative title/activity boxes as
+  often as genuine data tables — verified empirically (~240 raw "tables"
+  detected across 152 pages of `C110220.pdf`, most of them lesson-title
+  boxes, not data grids). A minimum-fill-ratio filter (`fill_ratio >= 0.5`)
+  drops the emptiest false positives, and each surviving table block
+  exposes its `fill_ratio` in `metadata` so downstream consumers can apply
+  a stricter threshold if needed — but this filter does NOT semantically
+  distinguish "layout box" from "real data table". Spot-checking
+  `C110220.pdf`'s survivors after filtering showed genuine content tables
+  (e.g. a norm-vs-value comparison table), so the filter is doing real
+  work, not just theoretically.
+
+The Markdown exporter renders `heading` blocks as `###` headers and `table`
+blocks as real Markdown tables when blocks are present, falling back to the
+flat `page.text` otherwise (e.g. for OCR-recovered pages, which have no
+font/position data to classify from).
+
 ## Known limitations / next steps
+
+- Heading detection is a font-size/color heuristic, not layout/semantic
+  understanding — see above.
+- Table quality filtering is structural (row/col count, fill ratio), not
+  semantic — see above.
 
 - OCR is a fallback for low-text pages, not a first-class path for fully
   scanned books — no page-deskew, no layout analysis beyond what Tesseract
   does internally.
-- Table extraction (`pdfplumber.extract_tables()`) isn't wired in yet —
-  needed for the supplementary-book pipeline's syllable/scansion tables.
 - Knowledge Graph extraction and cross-book concept merging are modeled
   (`app/domain/concept.py`) but not implemented — see ADR-002.
