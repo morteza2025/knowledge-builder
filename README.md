@@ -155,14 +155,23 @@ of `heading` / `paragraph` / `table` blocks:
   which on real textbook PDFs includes decorative title/activity boxes as
   often as genuine data tables — verified empirically (~240 raw "tables"
   detected across 152 pages of `C110220.pdf`, most of them lesson-title
-  boxes, not data grids). A minimum-fill-ratio filter (`fill_ratio >= 0.5`)
-  drops the emptiest false positives, and each surviving table block
-  exposes its `fill_ratio` in `metadata` so downstream consumers can apply
-  a stricter threshold if needed — but this filter does NOT semantically
-  distinguish "layout box" from "real data table". Spot-checking
-  `C110220.pdf`'s survivors after filtering showed genuine content tables
-  (e.g. a norm-vs-value comparison table), so the filter is doing real
-  work, not just theoretically.
+  boxes, not data grids). A bordered region is never silently dropped,
+  though: regions at/above a minimum filled-cell ratio (`fill_ratio >= 0.5`)
+  become `table` blocks; regions below that bar but short are relabeled as
+  `heading` blocks instead of being discarded. This matters in practice —
+  lesson-title boxes (e.g. "درس اول" + a short theme phrase) have
+  `fill_ratio` around 0.33 because most cells are empty icon placeholders,
+  and an earlier version of this filter was silently dropping them,
+  losing exactly the lesson-boundary markers this pipeline exists to
+  capture. Every table/relabeled-heading block still exposes `fill_ratio`
+  in `metadata` so downstream consumers can apply their own threshold.
+
+Also: Persian text extracted from this PDF contains tatweel/kashida
+characters (U+0640, inserted by the publisher to justify line width — e.g.
+"فصل" extracts as "فصـل"). These are stripped during cleaning
+(`persian_cleaner.normalize_persian_chars`) since they're not real
+characters and would otherwise break substring matching against plain
+"فصل"/"درس" chapter/lesson markers.
 
 The Markdown exporter renders `heading` blocks as `###` headers and `table`
 blocks as real Markdown tables when blocks are present, falling back to the
@@ -181,3 +190,22 @@ font/position data to classify from).
   does internally.
 - Knowledge Graph extraction and cross-book concept merging are modeled
   (`app/domain/concept.py`) but not implemented — see ADR-002.
+- **Chapter/lesson outline extraction is the next natural feature, and
+  groundwork for it is already validated against `C110220.pdf`:**
+  - Chapter headings ("فصل اول", "فصل دوم") are cleanly detected as
+    `heading` blocks by font size alone.
+  - Lesson-title boxes ("درس اول" + a short theme phrase) are detected too,
+    but NOT completely — some lessons' title boxes don't survive detection
+    (verified: lessons 1/2/3/6 of chapter 1 were found, 4/5/7 were not),
+    so this alone isn't a reliable way to build a complete outline.
+  - The book's own "فهرست" (table of contents) page lists every chapter and
+    lesson with an explicit page number, and IS complete — but parsing it
+    reliably needs Persian-Indic digit normalization and untangling some
+    digit-order artifacts from extraction (e.g. a page number extracting as
+    "٩2" instead of "29"), which wasn't solved cleanly enough this session
+    to ship. This — or cross-referencing the "آنچه از این درس آموختیم"
+    (lesson-end) markers, which were found completely and consistently (15
+    for this book) and could bound lessons even where the title box wasn't
+    caught — is the right starting point for building a full
+    `structure=[(chapter_title, [(order, lesson_title, page)])]`-shaped
+    outline for Django seeding.

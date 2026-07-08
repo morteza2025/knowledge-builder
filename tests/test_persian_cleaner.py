@@ -31,6 +31,14 @@ def test_normalize_persian_chars_maps_arabic_letters_to_persian():
     assert normalize_persian_chars("مك") == "مک"
 
 
+def test_normalize_persian_chars_strips_tatweel_justification_marks():
+    # Verified against input/C110220.pdf: "فصل" (chapter) is extracted as
+    # "فصـل" with an inserted tatweel (U+0640) for line justification,
+    # which breaks substring matching against plain "فصل" unless stripped.
+    assert normalize_persian_chars("فصـل اول") == "فصل اول"
+    assert "\u0640" not in normalize_persian_chars("خالصـه کنیـد")
+
+
 def test_clean_persian_text_removes_noise_lines():
     raw = "جامعه شناسی\n\n12\n---\nمتن اصلی"
     cleaned = clean_persian_text(raw)

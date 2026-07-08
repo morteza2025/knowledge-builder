@@ -20,10 +20,16 @@ Two independent signals are used, both verified against the real sample PDF
    manual review or a book with genuinely tabular content to calibrate
    against. What it does do: reconstruct each cell's text with the same
    verified RTL fix used for body text (Table.extract()'s built-in cell
-   text does NOT apply this fix and comes out word-order-scrambled), apply
-   a structural quality filter (minimum rows/cols, minimum filled-cell
-   ratio) to drop near-empty false positives, and expose `fill_ratio` in
-   block metadata so downstream consumers can apply their own threshold.
+   text does NOT apply this fix and comes out word-order-scrambled), then
+   NEVER silently drops a non-empty region — a bordered box with a low
+   filled-cell ratio (verified: lesson-title boxes like "درس اول" plus a
+   short theme phrase, ~0.33 fill ratio because most cells are empty icon
+   placeholders) is exactly the kind of lesson-boundary marker this
+   pipeline exists to capture, not junk to filter out. Regions at/above
+   the fill-ratio threshold become `table` blocks; short, sparse regions
+   below it become `heading` blocks (title-box case); longer sparse
+   regions become `paragraph` blocks. Every case keeps `fill_ratio` in
+   metadata so downstream consumers can apply their own threshold instead.
 """
 
 import statistics
@@ -49,6 +55,7 @@ _HEADING_LONG_LINE_CHARS = 100
 _TABLE_MIN_ROWS = 2
 _TABLE_MIN_COLS = 2
 _TABLE_MIN_FILL_RATIO = 0.5
+_SPARSE_BOX_TITLE_MAX_CHARS = 60
 
 
 @dataclass
@@ -236,24 +243,50 @@ def extract_table_blocks(
         filled_cells = sum(1 for row in fixed_rows for cell in row if cell.strip())
         fill_ratio = filled_cells / total_cells if total_cells else 0.0
 
-        if fill_ratio < _TABLE_MIN_FILL_RATIO:
-            continue
+        non_empty_texts = [cell for row in fixed_rows for cell in row if cell.strip()]
+        if not non_empty_texts:
+            continue  # genuinely empty bordered region — nothing to preserve
 
-        rendered = "\n".join(" | ".join(row) for row in fixed_rows)
         top = min(
             (bbox[1] for row in row_cell_bboxes for bbox in row if bbox), default=0
         )
 
+        # A bordered region with a low fill ratio isn't necessarily junk —
+        # verified against input/C110220.pdf: lesson-title boxes ("درس
+        # اول" + a short theme phrase) have fill_ratio ~0.33 because most
+        # cells are empty icon placeholders, not because the content is
+        # unimportant. Dropping anything below the data-table threshold
+        # would silently lose exactly the lesson-boundary markers this
+        # pipeline exists to capture. So: never drop, only relabel.
+        combined_text = " — ".join(non_empty_texts)
+
+        if fill_ratio >= _TABLE_MIN_FILL_RATIO:
+            block_type = BlockType.table
+            text = "\n".join(" | ".join(row) for row in fixed_rows)
+            confidence = fill_ratio
+        elif len(combined_text) <= _SPARSE_BOX_TITLE_MAX_CHARS:
+            # Short + sparse: almost certainly a title/label box, not a
+            # data grid or a real paragraph.
+            block_type = BlockType.heading
+            text = combined_text
+            confidence = 0.4
+        else:
+            block_type = BlockType.paragraph
+            text = combined_text
+            confidence = 0.3
+
         blocks.append(
             DocumentBlock(
                 id=f"{page_number}-table-{idx}",
-                type=BlockType.table,
-                text=rendered,
+                type=block_type,
+                text=text,
                 page=page_number,
                 metadata={
                     "rows": fixed_rows,
                     "fill_ratio": round(fill_ratio, 2),
                     "top": top,
+                    "confidence": round(confidence, 2),
+                    "source": "bordered_region",
                 },
             )
         )

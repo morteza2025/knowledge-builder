@@ -61,3 +61,37 @@ def test_table_blocks_meet_the_minimum_fill_ratio_quality_bar(sample_pages):
     # structure_analyzer.py docstring), just that whatever passed the
     # quality filter actually meets the documented bar.
     assert all(b.metadata.get("fill_ratio", 0) >= 0.5 for b in table_blocks)
+
+
+def test_sparse_lesson_title_boxes_are_preserved_not_dropped(sample_pages):
+    """Regression test for a real bug found during review: lesson-title
+    boxes (e.g. "درس اول" + a short theme phrase) have a low filled-cell
+    ratio (~0.33, mostly empty icon-placeholder cells) and were being
+    silently dropped by an earlier version of the fill-ratio filter —
+    losing exactly the lesson-boundary markers this pipeline exists to
+    capture. They must now survive as a heading (or at minimum a
+    paragraph) block, never disappear entirely."""
+
+    all_blocks_text = [
+        b.text for p in sample_pages for b in p.blocks
+    ]
+
+    assert any("درس اول" in text for text in all_blocks_text)
+    assert any("درس دوم" in text for text in all_blocks_text)
+
+
+def test_chapter_headings_are_clean_of_tatweel_justification_marks(sample_pages):
+    """Regression test: publishers insert tatweel/kashida (U+0640) to
+    justify lines, which previously broke substring matching (extracted
+    text read "فصـل" instead of "فصل"). Must be stripped by cleaning."""
+
+    heading_texts = [
+        b.text
+        for p in sample_pages
+        for b in p.blocks
+        if b.type.value == "heading"
+    ]
+
+    assert any(text.strip() == "فصل اول" for text in heading_texts)
+    assert any(text.strip() == "فصل دوم" for text in heading_texts)
+    assert not any("\u0640" in text for text in heading_texts)

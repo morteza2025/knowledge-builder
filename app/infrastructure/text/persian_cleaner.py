@@ -40,6 +40,12 @@ _ARABIC_TO_PERSIAN_MAP = {
     "ٱ": "ا",
 }
 
+# Tatweel/kashida (U+0640) is a typographic justification-stretch mark
+# publishers insert to fill line width — it is not a real character and
+# breaks substring matching (e.g. "فصـل" must match "فصل" for chapter/lesson
+# detection in app/infrastructure/pdf/outline_builder.py).
+_TATWEEL = "\u0640"
+
 # Short bracketed spans (e.g. chapter/reference numbers like "(1)") can come
 # out mirrored as ")1(" even after the per-word fix above, because the
 # bracket glyphs and the digit are extracted as one already-LTR "word" that
@@ -71,6 +77,7 @@ def fix_mirrored_brackets(text: str) -> str:
 
 
 def normalize_persian_chars(text: str) -> str:
+    text = text.replace(_TATWEEL, "")
     for old, new in _ARABIC_TO_PERSIAN_MAP.items():
         text = text.replace(old, new)
     return text
