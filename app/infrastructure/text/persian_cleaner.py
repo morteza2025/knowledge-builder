@@ -20,13 +20,31 @@ leaves the words themselves in the wrong sequence on the line. This
 combination was verified page-by-page against the real book PDF in this
 repo before being written here — do not simplify it back to a single-axis
 fix without re-verifying against a real Persian PDF.
+
+A THIRD fix is needed on top of both: page/reference numbers in this PDF
+are sometimes typeset as a MIX of Latin and Persian-Indic (U+06F0-06F9 /
+U+0660-0669) digit glyphs in the same token — e.g. page 29 extracts as the
+literal token "2٩" (Latin '2' + Persian-Indic '٩'=9), already in the
+CORRECT reading order. Persian-Indic digits fall inside the same Unicode
+block as Arabic letters, so the naive rule "reverse any word containing an
+Arabic-range character" was reversing these already-correct numbers into
+garbage ("2٩" -> "٩2", i.e. 29 -> 92). Fix: never reverse a token that is a
+number (optionally with light punctuation like a trailing period) — digit
+order is never a "reading direction" question, unlike letters.
 """
 
 import re
+import unicodedata
+from typing import Optional
 
 # Arabic + Persian Unicode ranges, plus ZWNJ (U+200C) and RTL mark (U+200F)
 # which commonly appear inside Persian words.
 _ARABIC_SCRIPT_PATTERN = re.compile(r"[\u0600-\u06FF\u200c\u200f]")
+
+# Punctuation that can legitimately trail/lead a number (e.g. a TOC line's
+# page number followed by a period) without meaning the token isn't "just a
+# number" for reversal purposes.
+_NUMERIC_STRIP_CHARS = ".,:;()[]{}٫٬"
 
 _ARABIC_TO_PERSIAN_MAP = {
     "ي": "ی",
@@ -61,10 +79,41 @@ def contains_arabic_script(text: str) -> bool:
     return bool(_ARABIC_SCRIPT_PATTERN.search(text))
 
 
+def looks_like_a_number(word: str) -> bool:
+    """True for tokens that are a number, possibly with light surrounding
+    punctuation (page numbers, list markers) — regardless of whether the
+    digits are Latin, Arabic-Indic, or Persian-Indic. Digit order is never
+    a reading-direction concern, so these must never be character-reversed
+    even though Persian-Indic digits share the Arabic Unicode block."""
+
+    stripped = word.strip(_NUMERIC_STRIP_CHARS)
+    return bool(stripped) and all(
+        unicodedata.category(ch) == "Nd" for ch in stripped
+    )
+
+
+def normalize_digits_to_int(token: str) -> Optional[int]:
+    """Converts a number token to a plain int regardless of digit script —
+    Python's unicodedata.digit() maps Latin, Arabic-Indic, and Persian-Indic
+    digit characters to the same 0-9 values. Non-digit characters (dot
+    leaders, punctuation) are ignored. Returns None if no digits are found.
+    """
+
+    digits = [ch for ch in token if unicodedata.category(ch) == "Nd"]
+    if not digits:
+        return None
+    return int("".join(str(unicodedata.digit(ch)) for ch in digits))
+
+
 def fix_word_glyph_order(word: str) -> str:
     """Reverse character order for words containing Arabic-script
-    characters. Latin/numeric-only tokens are returned unchanged."""
+    characters. Numbers (any digit script) and Latin/numeric-only tokens
+    are returned unchanged — see module docstring for why numbers need
+    their own guard even though Persian-Indic digits are technically
+    inside the Arabic Unicode range."""
 
+    if looks_like_a_number(word):
+        return word
     if contains_arabic_script(word):
         return word[::-1]
     return word

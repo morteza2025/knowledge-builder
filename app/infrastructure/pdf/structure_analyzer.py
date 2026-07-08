@@ -57,6 +57,20 @@ _TABLE_MIN_COLS = 2
 _TABLE_MIN_FILL_RATIO = 0.5
 _SPARSE_BOX_TITLE_MAX_CHARS = 60
 
+# Guards against a specific false-positive verified on this book's TOC
+# pages: dotted leader lines (title ................ 29) get misread by
+# find_tables() as table rules, producing one "table" whose bbox covers
+# most of the page and whose single merged cell contains dozens of newlines
+# (the entire page's real content, flattened). A genuine bordered box
+# (lesson-title box, content table) never combines BOTH a large page-area
+# footprint AND a wall of unrelated text in one cell — verified: the
+# largest genuine lesson-title box on this book covers 48% of its page
+# with at most 1 newline per cell; a legitimate large activity-box table
+# has 22 newlines in one cell but only 35% of page area. Only reject when
+# both signals fire together.
+_TABLE_MAX_AREA_RATIO = 0.5
+_TABLE_MAX_CELL_NEWLINES = 15
+
 
 @dataclass
 class LineInfo:
@@ -238,6 +252,21 @@ def extract_table_blocks(
                     cell_text = ""
                 row_texts.append(cell_text)
             fixed_rows.append(row_texts)
+
+        page_area = (page.width or 0) * (page.height or 0)
+        bbox_x0, bbox_top, bbox_x1, bbox_bottom = table.bbox
+        bbox_area = max(bbox_x1 - bbox_x0, 0) * max(bbox_bottom - bbox_top, 0)
+        area_ratio = (bbox_area / page_area) if page_area else 0.0
+        max_cell_newlines = max(
+            (cell.count("\n") for row in fixed_rows for cell in row), default=0
+        )
+
+        if area_ratio > _TABLE_MAX_AREA_RATIO and max_cell_newlines > _TABLE_MAX_CELL_NEWLINES:
+            # Verified false-positive pattern (see constant docstring above)
+            # — skip entirely rather than emit garbage; the page's real
+            # lines still get classified normally by the heading/paragraph
+            # path since this bbox is never added to exclude_bboxes.
+            continue
 
         total_cells = sum(len(row) for row in fixed_rows)
         filled_cells = sum(1 for row in fixed_rows for cell in row if cell.strip())

@@ -173,6 +173,75 @@ characters (U+0640, inserted by the publisher to justify line width — e.g.
 characters and would otherwise break substring matching against plain
 "فصل"/"درس" chapter/lesson markers.
 
+## Chapter/lesson/subtopic outline extraction (Django seeding bridge)
+
+Beyond per-page blocks, the pipeline now produces a full book outline —
+chapters, lessons (globally numbered across chapters, not restarting per
+chapter), and subtopic questions, each with the book's own printed page
+number — parsed from the book's own table-of-contents page(s), and exports
+it as JSON in the shape the existing Django seeding pattern expects:
+
+```python
+Book.update_or_create(subject, grade, field)
+structure = [(chapter_title, [(order, lesson_title, page)])]
+```
+
+**Why the TOC page, not body-text heading detection:** font-size-based
+heading detection alone is incomplete — verified against `C110220.pdf`,
+only 4 of 7 chapter-1 lesson-title boxes survived detection as distinct
+blocks. The book's own TOC page, by contrast, lists all 16 lessons across
+both chapters completely, each with an explicit page number — and even the
+subtopic-level questions beneath each lesson, also with page numbers. That
+granularity is exactly what `app/infrastructure/text/toc_parser.py` parses.
+
+**Quirks found and fixed while building this** (all verified against the
+real TOC pages in `C110220.pdf`, and covered by regression tests):
+
+1. **Mixed-script page numbers were being corrupted by this pipeline's own
+   RTL fix.** Page 29 extracts from the PDF as the token "2٩" (Latin '2' +
+   Persian-Indic '٩'=9) — already in correct reading order. But
+   Persian-Indic digits fall inside the same Unicode block as Arabic
+   letters, so the "reverse any word containing an Arabic-range character"
+   rule was reversing already-correct numbers into garbage ("2٩" -> "٩2",
+   i.e. 29 -> 92). Fixed in `persian_cleaner.py`: a token that's a number
+   (any digit script, with light punctuation) is never character-reversed
+   — digit order is never a reading-direction question. This bug affected
+   every Persian-Indic number in the whole pipeline, not just the TOC.
+2. **A single logical TOC line occasionally splits across two extracted
+   lines** — e.g. the word "کنش" lands alone on its own line, sometimes
+   ABOVE the "درس اول: های ما ... ٣" line it belongs with, due to a
+   diacritic-driven line-band split. The parser merges any line that
+   doesn't end in a dot-leader + page number into the correct position
+   relative to the next chapter/lesson label it finds (before or after,
+   whichever the raw extraction order implies).
+3. **A specific diacritic artifact on the word "اول" (first)** — both
+   "فصل اول" and "درس اول" extract with a stray space around the shadda
+   mark ("فصل ا ّول") that breaks exact-word matching. Fixed with a
+   targeted regex; no other ordinal word in this book showed the same
+   artifact.
+4. **A false-positive full-page "table."** `pdfplumber.find_tables()`
+   misreads this book's dotted TOC leaders (`عنوان .......... 29`) as table
+   rules, producing one "table" whose bbox covers ~63% of the page with
+   the entire page's real content flattened into a single cell (27
+   newlines). This used to replace the TOC page's real heading/paragraph
+   structure with one giant merged block, hiding the "فهرست" heading
+   entirely. Fixed with a guard in `structure_analyzer.py`: a bordered
+   region is only rejected as a false positive when BOTH its area ratio
+   AND its max single-cell newline count exceed a threshold together —
+   verified against this book's actual largest genuine title box (48% of
+   page area, 1 newline) and largest genuine content table (35% of page
+   area, 22 newlines) to make sure neither gets caught by the same guard.
+
+`field` (humanities/science/math/common) is deliberately left `null` in
+the exported seed JSON — it depends on curriculum placement, not PDF
+content, so this pipeline has no reliable way to infer it; it's left for
+whoever runs the seed script, per existing project convention.
+
+If no TOC page is found (or nothing parses out of it — e.g. a
+supplementary handout with no table of contents), outline export is
+silently skipped; this is treated as optional enrichment, not a hard
+requirement of a successful run.
+
 The Markdown exporter renders `heading` blocks as `###` headers and `table`
 blocks as real Markdown tables when blocks are present, falling back to the
 flat `page.text` otherwise (e.g. for OCR-recovered pages, which have no
@@ -184,28 +253,14 @@ font/position data to classify from).
   understanding — see above.
 - Table quality filtering is structural (row/col count, fill ratio), not
   semantic — see above.
-
 - OCR is a fallback for low-text pages, not a first-class path for fully
   scanned books — no page-deskew, no layout analysis beyond what Tesseract
   does internally.
 - Knowledge Graph extraction and cross-book concept merging are modeled
   (`app/domain/concept.py`) but not implemented — see ADR-002.
-- **Chapter/lesson outline extraction is the next natural feature, and
-  groundwork for it is already validated against `C110220.pdf`:**
-  - Chapter headings ("فصل اول", "فصل دوم") are cleanly detected as
-    `heading` blocks by font size alone.
-  - Lesson-title boxes ("درس اول" + a short theme phrase) are detected too,
-    but NOT completely — some lessons' title boxes don't survive detection
-    (verified: lessons 1/2/3/6 of chapter 1 were found, 4/5/7 were not),
-    so this alone isn't a reliable way to build a complete outline.
-  - The book's own "فهرست" (table of contents) page lists every chapter and
-    lesson with an explicit page number, and IS complete — but parsing it
-    reliably needs Persian-Indic digit normalization and untangling some
-    digit-order artifacts from extraction (e.g. a page number extracting as
-    "٩2" instead of "29"), which wasn't solved cleanly enough this session
-    to ship. This — or cross-referencing the "آنچه از این درس آموختیم"
-    (lesson-end) markers, which were found completely and consistently (15
-    for this book) and could bound lessons even where the title box wasn't
-    caught — is the right starting point for building a full
-    `structure=[(chapter_title, [(order, lesson_title, page)])]`-shaped
-    outline for Django seeding.
+- The outline builder assumes a TOC page labeled "فهرست" or "فهرست مطالب"
+  exists and follows a "label: title .... page" line format with dot
+  leaders — a book with a differently-formatted TOC (no dot leaders, a
+  different heading label, etc.) won't parse until that variant is seen
+  and handled.
+- `field` (subject track) is not inferred — see above.

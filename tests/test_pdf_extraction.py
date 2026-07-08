@@ -10,8 +10,9 @@ per assertion would make the suite unnecessarily slow.
 
 import pytest
 
+from app.application.use_cases.build_outline import build_outline
 from app.core.settings import settings
-from app.domain.document import ExtractionMethod
+from app.domain.document import DocumentMetadata, ExtractionMethod, KnowledgeDocument
 from app.infrastructure.pdf.pdfplumber_engine import PdfPlumberTextExtractor
 
 SAMPLE_PDF = settings.input_dir / "C110220.pdf"
@@ -95,3 +96,58 @@ def test_chapter_headings_are_clean_of_tatweel_justification_marks(sample_pages)
     assert any(text.strip() == "فصل اول" for text in heading_texts)
     assert any(text.strip() == "فصل دوم" for text in heading_texts)
     assert not any("\u0640" in text for text in heading_texts)
+
+
+def test_toc_page_is_not_swallowed_by_a_false_positive_full_page_table(sample_pages):
+    """Regression test: pdfplumber's find_tables() misreads this book's
+    dotted TOC leaders as table rules, producing one "table" whose bbox
+    covers ~63% of the page with 27 newlines flattened into a single
+    cell — which used to replace the page's entire real heading/paragraph
+    structure with one giant merged block. The "فهرست" (table of contents)
+    heading must survive as its own heading block, separate from the
+    entries below it."""
+
+    toc_pages = [
+        p
+        for p in sample_pages
+        if any(
+            b.type.value == "heading" and b.text.strip() == "فهرست"
+            for b in p.blocks
+        )
+    ]
+
+    assert len(toc_pages) >= 1
+    assert all(len(p.blocks) >= 2 for p in toc_pages)
+
+
+def test_outline_builder_finds_the_complete_chapter_lesson_structure(sample_pages):
+    """Integration test for the full TOC -> BookOutline path against the
+    real book: 2 chapters, 16 lessons total, globally numbered across
+    chapters (not restarting at 1 in chapter 2) — cross-checked against
+    the book's own printed structure."""
+
+    document = KnowledgeDocument(
+        metadata=DocumentMetadata(filename="C110220.pdf", total_pages=len(sample_pages)),
+        pages=sample_pages,
+    )
+    outline = build_outline(document)
+
+    assert outline is not None
+    assert len(outline.chapters) == 2
+
+    total_lessons = sum(len(chapter.lessons) for chapter in outline.chapters)
+    assert total_lessons == 16
+
+    chapter_1, chapter_2 = outline.chapters
+    assert chapter_1.order == 1
+    assert len(chapter_1.lessons) == 7
+    assert chapter_2.order == 2
+    assert len(chapter_2.lessons) == 9
+
+    # Global numbering: chapter 2's first lesson continues from chapter 1's
+    # last, it doesn't restart at 1.
+    assert chapter_2.lessons[0].order == 8
+
+    lesson_1 = chapter_1.lessons[0]
+    assert lesson_1.page == 3
+    assert len(lesson_1.subtopics) >= 1

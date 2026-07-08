@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     output_dir: Path = base_dir / "outputs"
     json_output_dir: Path = output_dir / "json"
     markdown_output_dir: Path = output_dir / "markdown"
+    django_seed_output_dir: Path = output_dir / "django_seed"
     log_dir: Path = base_dir / "logs"
 
     max_pages_per_pdf: int = 5000
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
             self.output_dir,
             self.json_output_dir,
             self.markdown_output_dir,
+            self.django_seed_output_dir,
             self.log_dir,
         ]:
             path.mkdir(parents=True, exist_ok=True)

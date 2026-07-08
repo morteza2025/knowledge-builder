@@ -51,6 +51,12 @@ def process_pdf(
     document = result_context.document
     assert document is not None
 
+    outline = result_context.outline
+    outline_chapters = len(outline.chapters) if outline else 0
+    outline_lessons = (
+        sum(len(chapter.lessons) for chapter in outline.chapters) if outline else 0
+    )
+
     return ProcessResult(
         ok=True,
         book_title=document.metadata.title or book_title,
@@ -63,5 +69,12 @@ def process_pdf(
         pages_needing_review=document.pages_needing_review,
         json_output=str(result_context.export_paths.get("JsonExporter", "")),
         markdown_output=str(result_context.export_paths.get("MarkdownExporter", "")),
+        outline_chapters=outline_chapters,
+        outline_lessons=outline_lessons,
+        django_seed_output=(
+            str(result_context.export_paths["DjangoSeedExporter"])
+            if "DjangoSeedExporter" in result_context.export_paths
+            else None
+        ),
         warnings=document.warnings,
     )

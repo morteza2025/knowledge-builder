@@ -13,8 +13,11 @@ from typing import Optional
 from app.application.pipeline.pipeline import Pipeline
 from app.application.pipeline.stage import PipelineStage
 from app.application.ports import ExporterPort, TextExtractionPort
+from app.application.use_cases.build_outline import build_outline
 from app.core.settings import settings
 from app.domain.document import DocumentMetadata, KnowledgeDocument
+from app.domain.outline import BookOutline
+from app.infrastructure.exporter.django_seed_exporter import DjangoSeedExporter
 
 
 @dataclass
@@ -28,6 +31,7 @@ class ProcessingContext:
 
     pages: list = field(default_factory=list)
     document: Optional[KnowledgeDocument] = None
+    outline: Optional[BookOutline] = None
     export_paths: dict[str, Path] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
@@ -72,6 +76,20 @@ class BuildDocumentStage(PipelineStage[ProcessingContext]):
         return context
 
 
+class BuildOutlineStage(PipelineStage[ProcessingContext]):
+    """Optional enrichment: parses the book's own table-of-contents page(s)
+    into a chapter/lesson/subtopic outline. Not every source document has a
+    TOC page (handouts, supplementary sheets) — when none is found, this is
+    a no-op, not an error."""
+
+    name = "build_outline"
+
+    def run(self, context: ProcessingContext) -> ProcessingContext:
+        assert context.document is not None, "BuildDocumentStage must run first"
+        context.outline = build_outline(context.document)
+        return context
+
+
 class ExportStage(PipelineStage[ProcessingContext]):
     name = "export"
 
@@ -86,6 +104,22 @@ class ExportStage(PipelineStage[ProcessingContext]):
         return context
 
 
+class ExportOutlineStage(PipelineStage[ProcessingContext]):
+    name = "export_outline"
+
+    def __init__(self, outline_exporter: DjangoSeedExporter):
+        self._outline_exporter = outline_exporter
+
+    def run(self, context: ProcessingContext) -> ProcessingContext:
+        if context.outline is not None:
+            assert context.document is not None
+            path = self._outline_exporter.export(
+                context.outline, context.document.metadata
+            )
+            context.export_paths["DjangoSeedExporter"] = path
+        return context
+
+
 class ProcessBookUseCase:
     def __init__(self, pipeline: Pipeline[ProcessingContext]):
         self._pipeline = pipeline
@@ -97,14 +131,18 @@ class ProcessBookUseCase:
 def build_default_process_book_use_case(
     text_extractor: TextExtractionPort,
     exporters: list[ExporterPort],
+    outline_exporter: Optional[DjangoSeedExporter] = None,
 ) -> ProcessBookUseCase:
-    """Wires the standard Extract -> Build -> Export pipeline. This is the
-    one place in the whole codebase that knows which concrete adapters are
-    in use — everything upstream only ever sees the ports."""
+    """Wires the standard Extract -> Build -> BuildOutline -> Export ->
+    ExportOutline pipeline. This is the one place in the whole codebase
+    that knows which concrete adapters are in use — everything upstream
+    only ever sees the ports."""
 
     pipeline: Pipeline[ProcessingContext] = Pipeline()
     pipeline.add(ExtractPagesStage(text_extractor))
     pipeline.add(BuildDocumentStage())
+    pipeline.add(BuildOutlineStage())
     pipeline.add(ExportStage(exporters))
+    pipeline.add(ExportOutlineStage(outline_exporter or DjangoSeedExporter()))
 
     return ProcessBookUseCase(pipeline)

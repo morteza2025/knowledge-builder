@@ -32,4 +32,7 @@ class ProcessResult(BaseModel):
     pages_needing_review: int
     json_output: str
     markdown_output: str
+    outline_chapters: int = 0
+    outline_lessons: int = 0
+    django_seed_output: Optional[str] = None
     warnings: list[str] = []
