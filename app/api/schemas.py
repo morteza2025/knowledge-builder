@@ -36,3 +36,32 @@ class ProcessResult(BaseModel):
     outline_lessons: int = 0
     django_seed_output: Optional[str] = None
     warnings: list[str] = []
+
+
+class BatchProcessRequest(BaseModel):
+    filenames: Optional[list[str]] = None
+    use_ocr: bool = True
+
+    @field_validator("filenames")
+    @classmethod
+    def _reject_empty_list(cls, value):
+        if value is not None and len(value) == 0:
+            raise ValueError(
+                "filenames was given as an empty list — omit it entirely to "
+                "auto-discover every PDF in input/, or list at least one file."
+            )
+        return value
+
+
+class BatchItemResultSchema(BaseModel):
+    filename: str
+    ok: bool
+    result: Optional[ProcessResult] = None
+    error: Optional[str] = None
+
+
+class BatchProcessResult(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    items: list[BatchItemResultSchema]

@@ -51,6 +51,49 @@ curl -X POST http://127.0.0.1:8000/process \
 
 Output lands in `outputs/json/<name>.json` and `outputs/markdown/<name>.md`.
 
+## Batch processing multiple books
+
+```bash
+# Process specific files
+curl -X POST http://127.0.0.1:8000/process/batch \
+  -H "Content-Type: application/json" \
+  -d '{"filenames": ["C110220.pdf", "another_book.pdf"]}'
+
+# Or process every PDF currently in input/ — omit "filenames" entirely
+curl -X POST http://127.0.0.1:8000/process/batch \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Each book uses its own `<name>.meta.json` sidecar file for title/course/grade
+(see "Avoiding encoding corruption" above) — batch requests don't take
+per-book metadata directly, since typing several books' Persian titles into
+one request is exactly the kind of thing that risks terminal-encoding
+corruption. Drop PDFs into `input/` with their sidecar files and batch-run
+the whole folder.
+
+One bad file (missing, corrupt, wrong format) fails only that item — the
+response reports `total` / `succeeded` / `failed` counts plus a per-file
+result-or-error, and the rest of the batch still completes:
+
+```json
+{
+  "total": 3, "succeeded": 2, "failed": 1,
+  "items": [
+    {"filename": "book1.pdf", "ok": true, "result": { "...": "..." }},
+    {"filename": "book2.pdf", "ok": false, "error": "File not found: ..."},
+    {"filename": "book3.pdf", "ok": true, "result": { "...": "..." }}
+  ]
+}
+```
+
+Processing is sequential, not parallel — see
+`app/application/use_cases/process_batch.py` for why (short version: this
+is a local single-machine tool, and both pdfplumber parsing and Tesseract
+OCR are CPU-bound, so threads wouldn't meaningfully speed things up without
+adding real complexity). A large enough batch would be the point to
+revisit this with a process pool.
+
 ## Avoiding encoding corruption
 
 An earlier version of this project had a real bug: `book_title` came back
