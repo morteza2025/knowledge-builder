@@ -51,7 +51,28 @@ curl -X POST http://127.0.0.1:8000/process \
 
 Output lands in `outputs/json/<name>.json` and `outputs/markdown/<name>.md`.
 
+## Command-line interface (no server needed)
+
+For a one-off run, `cli.py` does everything the API does without starting
+uvicorn:
+
+```bash
+python cli.py process C110220.pdf --title "جامعه شناسی (۱)" --course انسانی --grade دهم
+
+python cli.py process C110220.pdf --json   # machine-readable output
+
+python cli.py batch                         # every PDF in input/
+python cli.py batch book1.pdf book2.pdf     # just these
+```
+
+Exit code is `0` when everything succeeded, `1` if any book failed (`batch`
+still processes every book regardless — see below). Same metadata
+resolution as the API: `--title`/`--course`/`--grade` first, then each
+book's own `<name>.meta.json` sidecar file, then the filename.
+
 ## Batch processing multiple books
+
+Via the API:
 
 ```bash
 # Process specific files
@@ -64,6 +85,8 @@ curl -X POST http://127.0.0.1:8000/process/batch \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
+
+Or, without a running server: `python cli.py batch` (see above).
 
 Each book uses its own `<name>.meta.json` sidecar file for title/course/grade
 (see "Avoiding encoding corruption" above) — batch requests don't take
