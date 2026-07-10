@@ -1,8 +1,10 @@
 # ADR-002: Knowledge Graph & Multi-Book Semantic Memory Roadmap
 
 ## Status
-Accepted (roadmap) — domain models in place, extraction/merge logic not yet
-implemented.
+Partially implemented. `ConceptRelationExtractorPort` has a real, working
+adapter (Anthropic Claude, tool use) as of the concept-extraction feature
+added July 2026 — see "Implemented now" below. `ConceptMergePort`
+(cross-book canonical merging) is still just the seam, no adapter yet.
 
 ## Context
 Knowledge Builder must eventually become more than a per-book PDF-to-text
@@ -41,40 +43,54 @@ requires:
   `EducationalConcept`) so each edge can have its own confidence, source, and
   be queried from either direction (`KnowledgeGraph.relationships_for`).
 
-### Extraction and merge logic (NOT implemented yet — this is the roadmap)
-Two application-level ports are defined in `app/application/ports.py` as the
-seams for future work:
+### Extraction and merge logic
 
-- `ConceptRelationExtractorPort` — given a `KnowledgeDocument`, propose
-  `EducationalConcept`s and `ConceptRelationship`s. This is almost certainly
-  LLM-assisted (an LLM reading extracted text and proposing "Derivative
-  requires Limit"). The port exists precisely so the domain and application
-  layers never import an LLM SDK directly — Design Principle #4 (LLM
-  Independent).
-- `ConceptMergePort` — given a candidate concept and the existing graph,
-  decide whether it matches an existing canonical concept (Semantic Memory).
-  Likely a mix of embedding similarity and LLM judgment, again hidden behind
-  the port.
+**Implemented now:** `app/infrastructure/llm/anthropic_concept_extractor.py`
+implements `ConceptRelationExtractorPort` using the Anthropic Claude API
+(tool use / forced function-calling, not "ask the model to return JSON in
+prose" — guaranteed schema-shaped output, no parsing fragility). It
+operates on one `LessonTextExtract` at a time — see
+`app/application/use_cases/build_lesson_extracts.py` for how lesson
+boundaries are resolved from the outline (ADR itself unchanged: a whole
+book is too large for one LLM call, a raw page is too small to capture a
+lesson's concepts). Wired into the main pipeline as an opt-in stage
+(`ExtractConceptsStage` / `ProcessingContext.extract_concepts`) — off by
+default, since unlike every other stage this involves real API cost and
+latency. Constructing the adapter never requires an API key; only calling
+`.extract()` does, raising `ConceptExtractionNotConfiguredError` (defined
+in `app/core/exceptions.py`, not the infrastructure module, so the
+application layer can catch it without an infrastructure import) — the
+pipeline stage catches this once per book (not once per lesson) and
+degrades gracefully rather than failing the whole run. See README.md
+"Concept extraction (Knowledge Graph)" for setup and usage.
 
-**Why not implement these now:** both require real inference over real
-educational content (an LLM call, or a trained similarity model) — there is
-no honest way to stub this out with placeholder logic without producing a
-knowledge graph that looks structured but is actually meaningless. Building
-on top of unverified concept-relationships would be worse than not having
-them, especially while the underlying text-extraction quality was itself
-still being fixed (see ADR-001 follow-up: the RTL word/character-order bug).
+Concept ids produced this way are lesson-scoped
+(`lesson-3:social-action`), not canonical — this is intentional and
+honest: nothing here claims cross-lesson or cross-book deduplication it
+doesn't actually do yet. That's `ConceptMergePort`'s job.
+
+**Not implemented yet:** `ConceptMergePort` — given a candidate concept and
+the existing graph, decide whether it matches an existing canonical
+concept (Semantic Memory: "Society" from Book A and Book B should merge).
+Likely a mix of embedding similarity and LLM judgment, hidden behind the
+port the same way extraction is. Not implemented because there's no
+honest way to validate merge logic without at least two books' worth of
+real extracted concepts to test it against — extracting from a second book
+is now unblocked by this feature, so this is the natural next step.
 
 ### Sequencing
-1. ~~Fix text extraction (RTL correctness, OCR fallback).~~ — done, this
-   rebuild.
-2. Implement `ConceptRelationExtractorPort` with a real LLM-backed adapter,
-   scoped initially to a single subject (e.g. one grade's sociology book) so
-   output quality can be manually reviewed before scaling up.
+1. ~~Fix text extraction (RTL correctness, OCR fallback).~~ — done.
+2. ~~Implement `ConceptRelationExtractorPort` with a real LLM-backed
+   adapter.~~ — done (Anthropic Claude, per-lesson). Not yet scoped down to
+   "one subject, manually reviewed" as originally planned here — that
+   review step is still worth doing before trusting output at scale, it
+   just hasn't happened yet since API-key setup was deferred.
 3. Implement `ConceptMergePort` once there are at least two books' worth of
    extracted concepts to actually test merging against.
-4. Only after both are validated: wire a `BuildKnowledgeGraphStage` into the
-   pipeline (see `app/application/pipeline/`) so graph construction becomes
-   part of the standard per-book run, not a separate offline script.
+4. Wire a `BuildKnowledgeGraphStage` that accumulates across books (today's
+   `ExtractConceptsStage` produces one book's concepts/relationships per
+   run, exported standalone — not yet merged into a persistent,
+   cross-book-growing graph).
 
 ## Consequences
 - The domain is ready to receive real graph data as soon as an extractor

@@ -14,7 +14,7 @@ from typing import Optional
 from PIL import Image
 
 from app.domain.concept import ConceptRelationship, EducationalConcept
-from app.domain.document import DocumentPage, KnowledgeDocument
+from app.domain.document import DocumentPage, KnowledgeDocument, LessonTextExtract
 
 
 class TextExtractionPort(ABC):
@@ -48,17 +48,21 @@ class ExporterPort(ABC):
 
 
 class ConceptRelationExtractorPort(ABC):
-    """Future use (Knowledge Graph roadmap): given a KnowledgeDocument,
-    propose EducationalConcepts and ConceptRelationships between them.
+    """Knowledge Graph roadmap (see ADR-002): given one lesson's text
+    (LessonTextExtract — a whole book is too large for one LLM call to
+    reason about coherently, a single raw page is too small to capture a
+    lesson's concepts), propose EducationalConcepts and
+    ConceptRelationships between them.
 
-    Not implemented yet — this is the seam where an LLM-backed adapter will
-    plug in later without the domain or application layer knowing an LLM is
-    involved at all.
+    Implemented by app/infrastructure/llm/anthropic_concept_extractor.py.
+    The domain and application layers only ever see this port — no LLM
+    SDK import anywhere above the infrastructure layer (Design Principle
+    #4: LLM Independent).
     """
 
     @abstractmethod
     def extract(
-        self, document: KnowledgeDocument
+        self, lesson: LessonTextExtract
     ) -> tuple[list[EducationalConcept], list[ConceptRelationship]]:
         ...
 

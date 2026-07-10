@@ -18,6 +18,11 @@ pdfplumber>=0.11
 pytesseract>=0.3.10
 pillow>=10.0
 
+# --- Knowledge Graph concept extraction (optional — see README.md
+# "Concept extraction (Knowledge Graph)"; every other feature works
+# without ANTHROPIC_API_KEY configured) ---
+anthropic>=0.34
+
 # --- Testing ---
 pytest>=8.0
 httpx>=0.27

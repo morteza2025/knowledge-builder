@@ -11,6 +11,7 @@ class ProcessRequest(BaseModel):
     course: Optional[str] = None
     grade: Optional[str] = None
     use_ocr: bool = True
+    extract_concepts: bool = False
 
     @field_validator("book_title", "course", "grade")
     @classmethod
@@ -35,12 +36,16 @@ class ProcessResult(BaseModel):
     outline_chapters: int = 0
     outline_lessons: int = 0
     django_seed_output: Optional[str] = None
+    concepts_extracted: int = 0
+    relationships_extracted: int = 0
+    knowledge_graph_output: Optional[str] = None
     warnings: list[str] = []
 
 
 class BatchProcessRequest(BaseModel):
     filenames: Optional[list[str]] = None
     use_ocr: bool = True
+    extract_concepts: bool = False
 
     @field_validator("filenames")
     @classmethod

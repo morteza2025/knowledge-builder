@@ -34,6 +34,7 @@ def _build_context(
     course: str | None,
     grade: str | None,
     use_ocr: bool,
+    extract_concepts: bool = False,
 ) -> ProcessingContext:
     pdf_path = settings.input_dir / filename
     resolved_title, resolved_course, resolved_grade = resolve_book_metadata(
@@ -46,6 +47,7 @@ def _build_context(
         course=resolved_course,
         grade=resolved_grade,
         use_ocr=use_ocr,
+        extract_concepts=extract_concepts,
     )
 
 
@@ -60,6 +62,10 @@ def _context_to_result(
     outline_lessons = (
         sum(len(chapter.lessons) for chapter in outline.chapters) if outline else 0
     )
+
+    graph = result_context.knowledge_graph
+    concepts_extracted = len(graph.concepts) if graph else 0
+    relationships_extracted = len(graph.relationships) if graph else 0
 
     return ProcessResult(
         ok=True,
@@ -80,6 +86,13 @@ def _context_to_result(
             if "DjangoSeedExporter" in result_context.export_paths
             else None
         ),
+        concepts_extracted=concepts_extracted,
+        relationships_extracted=relationships_extracted,
+        knowledge_graph_output=(
+            str(result_context.export_paths["KnowledgeGraphExporter"])
+            if "KnowledgeGraphExporter" in result_context.export_paths
+            else None
+        ),
         warnings=document.warnings,
     )
 
@@ -94,7 +107,7 @@ def process_pdf(
     use_case: ProcessBookUseCase = Depends(get_process_book_use_case),
 ):
     context = _build_context(
-        req.filename, req.book_title, req.course, req.grade, req.use_ocr
+        req.filename, req.book_title, req.course, req.grade, req.use_ocr, req.extract_concepts
     )
 
     try:
@@ -124,7 +137,7 @@ def process_batch(
         )
 
     contexts = [
-        _build_context(filename, None, None, None, req.use_ocr)
+        _build_context(filename, None, None, None, req.use_ocr, req.extract_concepts)
         for filename in filenames
     ]
 

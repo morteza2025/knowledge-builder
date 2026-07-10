@@ -313,6 +313,74 @@ blocks as real Markdown tables when blocks are present, falling back to the
 flat `page.text` otherwise (e.g. for OCR-recovered pages, which have no
 font/position data to classify from).
 
+## Concept extraction (Knowledge Graph)
+
+Optional, opt-in, and off by default — set `extract_concepts: true` (API),
+`--extract-concepts` (CLI), or `"extract_concepts": true` in a batch
+request. Uses the Anthropic Claude API to read each lesson (see below for
+how "lesson" is resolved) and propose `EducationalConcept`s and the
+`ConceptRelationship`s between them (prerequisite, depends_on, parent,
+child, related, similar, opposite, frequently_confused — see
+`docs/architecture/ADR-002-knowledge-graph-roadmap.md`), exported to
+`outputs/knowledge_graph/<name>.graph.json`.
+
+### Setup
+
+```bash
+# .env, or export directly — read automatically by the Anthropic SDK
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Nothing else in this pipeline requires this key. Every other endpoint,
+the CLI's `process`/`batch` without `--extract-concepts`, and every test
+except the ones that inject a fake client, work exactly the same with or
+without it configured. Requesting `extract_concepts` without a key doesn't
+crash the run either — it adds one warning
+(`"Concept extraction skipped: ..."`) and every other output (JSON,
+Markdown, Django seed) is produced normally.
+
+Model and token limit are configurable (`CONCEPT_EXTRACTION_MODEL`,
+`CONCEPT_EXTRACTION_MAX_TOKENS` in `.env`), defaulting to `claude-sonnet-5`
+— check Anthropic's current model list if you want to swap in something
+cheaper/faster for bulk runs across many books.
+
+### How a "lesson" is resolved for one LLM call
+
+A whole book is too large for one LLM call to reason about coherently; a
+single raw PDF page is too small to capture a lesson's concepts (which
+routinely span several pages). So each lesson from the outline (see above)
+becomes exactly one call, via `app/application/use_cases/build_lesson_extracts.py`.
+
+This needed solving a real problem first: the outline's page numbers are
+the book's own **printed** page numbers (page 3, as a student would look
+it up), but the PDF file has cover/foreword/TOC pages before the book's own
+page 1 begins, so the actual PDF page index for that same content is
+higher (PDF page 11). The offset between the two isn't hardcoded — it's
+computed per document from structural evidence already available: heading
+blocks whose text contains a recognizable "فصل N" / "درس N" label are
+matched (by chapter/lesson number, not by title text — chapter heading
+blocks are often just the bare label with no title attached) against the
+outline's printed page number for that same chapter/lesson, and
+`offset = pdf_page - printed_page` for each such match. The most common
+offset across all matches wins. Verified against `C110220.pdf`: 3
+independent matches (both chapter headings, one lesson-title box) all
+agree on offset=8, and lesson 1's resolved start page (PDF page 11)
+lands exactly where that lesson's title box was independently found
+during structural block detection.
+
+### What's implemented vs. not (see ADR-002 for the full roadmap)
+
+- **Implemented:** per-lesson concept + relationship extraction via tool
+  use (forced function-calling, not "ask the model to return JSON in
+  prose" — the response is guaranteed schema-shaped, no markdown-fence
+  parsing fragility).
+- **Not implemented:** merging the same concept found across multiple
+  books into one canonical record (`ConceptMergePort` in
+  `app/application/ports.py` — the seam exists, the logic doesn't yet).
+  Concept ids are lesson-scoped for now (`lesson-3:social-action`, not a
+  bare canonical id), which is an honest reflection of that: nothing here
+  claims cross-book canonicalization it doesn't actually do.
+
 ## Known limitations / next steps
 
 - Heading detection is a font-size/color heuristic, not layout/semantic
@@ -322,8 +390,9 @@ font/position data to classify from).
 - OCR is a fallback for low-text pages, not a first-class path for fully
   scanned books — no page-deskew, no layout analysis beyond what Tesseract
   does internally.
-- Knowledge Graph extraction and cross-book concept merging are modeled
-  (`app/domain/concept.py`) but not implemented — see ADR-002.
+- Per-lesson concept/relationship extraction is implemented (see "Concept
+  extraction (Knowledge Graph)" above); cross-book canonical merging
+  (`ConceptMergePort` in `app/application/ports.py`) is not — see ADR-002.
 - The outline builder assumes a TOC page labeled "فهرست" or "فهرست مطالب"
   exists and follows a "label: title .... page" line format with dot
   leaders — a book with a differently-formatted TOC (no dot leaders, a

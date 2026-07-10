@@ -11,9 +11,11 @@ logs/*.log
 outputs/json/*
 outputs/markdown/*
 outputs/django_seed/*
+outputs/knowledge_graph/*
 !outputs/json/.gitkeep
 !outputs/markdown/.gitkeep
 !outputs/django_seed/.gitkeep
+!outputs/knowledge_graph/.gitkeep
 
 # Large source PDFs don't belong in git history. Keep them in input/ locally
 # or fetch from Drive at run time; commit only the small sample used by tests.

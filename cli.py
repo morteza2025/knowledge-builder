@@ -41,6 +41,7 @@ def _build_context(
     course: Optional[str],
     grade: Optional[str],
     use_ocr: bool,
+    extract_concepts: bool = False,
 ) -> ProcessingContext:
     pdf_path = settings.input_dir / filename
     resolved_title, resolved_course, resolved_grade = resolve_book_metadata(
@@ -53,6 +54,7 @@ def _build_context(
         course=resolved_course,
         grade=resolved_grade,
         use_ocr=use_ocr,
+        extract_concepts=extract_concepts,
     )
 
 
@@ -60,6 +62,7 @@ def _result_payload(context: ProcessingContext) -> dict:
     document = context.document
     assert document is not None
     outline = context.outline
+    graph = context.knowledge_graph
 
     return {
         "filename": context.filename,
@@ -81,6 +84,13 @@ def _result_payload(context: ProcessingContext) -> dict:
         "django_seed_output": (
             str(context.export_paths["DjangoSeedExporter"])
             if "DjangoSeedExporter" in context.export_paths
+            else None
+        ),
+        "concepts_extracted": len(graph.concepts) if graph else 0,
+        "relationships_extracted": len(graph.relationships) if graph else 0,
+        "knowledge_graph_output": (
+            str(context.export_paths["KnowledgeGraphExporter"])
+            if "KnowledgeGraphExporter" in context.export_paths
             else None
         ),
         "warnings": document.warnings,
@@ -109,6 +119,12 @@ def _print_human_summary(context: ProcessingContext) -> None:
     print(f"  Markdown: {payload['markdown_output']}")
     if payload["django_seed_output"]:
         print(f"  Django seed: {payload['django_seed_output']}")
+    if payload["knowledge_graph_output"]:
+        print(
+            f"  گراف دانش: {payload['concepts_extracted']} مفهوم، "
+            f"{payload['relationships_extracted']} رابطه -> "
+            f"{payload['knowledge_graph_output']}"
+        )
     if payload["warnings"]:
         print("  هشدارها:")
         for warning in payload["warnings"]:
@@ -118,7 +134,12 @@ def _print_human_summary(context: ProcessingContext) -> None:
 def cmd_process(args: argparse.Namespace) -> int:
     use_case = get_process_book_use_case()
     context = _build_context(
-        args.filename, args.title, args.course, args.grade, not args.no_ocr
+        args.filename,
+        args.title,
+        args.course,
+        args.grade,
+        not args.no_ocr,
+        args.extract_concepts,
     )
 
     try:
@@ -152,7 +173,8 @@ def cmd_batch(args: argparse.Namespace) -> int:
         return 1
 
     contexts = [
-        _build_context(name, None, None, None, not args.no_ocr) for name in filenames
+        _build_context(name, None, None, None, not args.no_ocr, args.extract_concepts)
+        for name in filenames
     ]
     batch_result = ProcessBatchUseCase(use_case).execute(contexts)
 
@@ -211,6 +233,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-ocr", action="store_true", help="Disable the OCR fallback"
     )
     process_parser.add_argument(
+        "--extract-concepts",
+        action="store_true",
+        help="Also run LLM-based concept/relationship extraction per lesson "
+        "(requires ANTHROPIC_API_KEY — see README.md)",
+    )
+    process_parser.add_argument(
         "--json", action="store_true", help="Print machine-readable JSON"
     )
     process_parser.set_defaults(func=cmd_process)
@@ -224,6 +252,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="PDF filenames inside input/ (omit to process every PDF there)",
     )
     batch_parser.add_argument("--no-ocr", action="store_true")
+    batch_parser.add_argument(
+        "--extract-concepts",
+        action="store_true",
+        help="Also run LLM-based concept/relationship extraction per lesson, "
+        "for every book in the batch (requires ANTHROPIC_API_KEY)",
+    )
     batch_parser.add_argument("--json", action="store_true")
     batch_parser.set_defaults(func=cmd_batch)
 

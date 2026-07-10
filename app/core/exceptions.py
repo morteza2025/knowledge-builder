@@ -19,3 +19,12 @@ class SuspiciousEncodingError(KnowledgeBuilderError):
     README.md 'Avoiding encoding corruption' for the underlying cause and the
     recommended fix (sidecar metadata file or a UTF-8-safe HTTP client).
     """
+
+
+class ConceptExtractionNotConfiguredError(KnowledgeBuilderError):
+    """Raised when concept extraction (Knowledge Graph roadmap, ADR-002) is
+    attempted without an Anthropic API key configured. This is expected and
+    normal until you're ready to use this feature — every other part of the
+    pipeline works without it. Lives here (not in the infrastructure LLM
+    adapter that raises it) so the application layer can catch it
+    specifically without importing anything infrastructure-specific."""

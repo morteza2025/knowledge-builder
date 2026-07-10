@@ -17,41 +17,18 @@ Known quirks handled here, all found by testing against the real TOC pages:
    into the following line before matching.
 3. The word "اول" (first) specifically extracts with a stray space around
    its shadda diacritic ("ا ّول" instead of "اول") in both "فصل اول" and
-   "درس اول" — collapsed by a targeted regex before parsing. Verified: no
-   other ordinal word in this book showed the same artifact.
+   "درس اول" — collapsed in app/infrastructure/text/ordinal_labels.py.
+   Verified: no other ordinal word in this book showed the same artifact.
 """
 
-import re
 from typing import Optional
 
 from app.domain.outline import BookOutline, ChapterOutline, LessonOutline, SubtopicOutline
+from app.infrastructure.text.ordinal_labels import find_label
 from app.infrastructure.text.persian_cleaner import normalize_digits_to_int
 
-_ORDINAL_WORDS = {
-    "اول": 1,
-    "یکم": 1,
-    "دوم": 2,
-    "سوم": 3,
-    "چهارم": 4,
-    "پنجم": 5,
-    "ششم": 6,
-    "هفتم": 7,
-    "هشتم": 8,
-    "نهم": 9,
-    "دهم": 10,
-    "یازدهم": 11,
-    "دوازدهم": 12,
-    "سیزدهم": 13,
-    "چهاردهم": 14,
-    "پانزدهم": 15,
-    "شانزدهم": 16,
-    "هفدهم": 17,
-    "هجدهم": 18,
-    "نوزدهم": 19,
-    "بیستم": 20,
-}
+import re
 
-_LABEL_ANYWHERE = re.compile(r"(?P<kind>فصل|درس)\s+(?P<ord>\S+)\s*:?\s*(?P<rest>.*)$")
 _TOC_LINE = re.compile(
     r"^(?P<title>.+?)\.{2,}\s*(?P<page>[0-9\u0660-\u0669\u06F0-\u06F9]+)\s*$"
 )
@@ -66,21 +43,6 @@ _TOC_HEADING_TEXT = "فهرست"
 # isn't mistaken for a new lesson header.
 _MAX_LABEL_PREFIX_CHARS = 15
 
-# See quirk #3 in the module docstring — narrow, verified fix.
-_AVVAL_ARTIFACT = re.compile(r"ا\s*\u0651?\s*ول\b")
-
-
-def _fix_avval_artifact(text: str) -> str:
-    return _AVVAL_ARTIFACT.sub("اول", text)
-
-
-def _only_arabic_letters(word: str) -> str:
-    return re.sub(r"[^\u0600-\u06FF]", "", word)
-
-
-def _parse_ordinal(word: str) -> Optional[int]:
-    return _ORDINAL_WORDS.get(_only_arabic_letters(word))
-
 
 def parse_toc_text(toc_text: str) -> BookOutline:
     chapters: list[ChapterOutline] = []
@@ -88,9 +50,7 @@ def parse_toc_text(toc_text: str) -> BookOutline:
     current_lesson: Optional[LessonOutline] = None
     pending_prefix = ""
 
-    text = _fix_avval_artifact(toc_text)
-
-    for raw_line in text.split("\n"):
+    for raw_line in toc_text.split("\n"):
         line = raw_line.strip()
         if not line:
             continue
@@ -112,27 +72,27 @@ def parse_toc_text(toc_text: str) -> BookOutline:
         )
         pending_prefix = ""
 
-        label_match = _LABEL_ANYWHERE.search(combined)
-        order = _parse_ordinal(label_match.group("ord")) if label_match else None
+        label = find_label(combined, max_prefix_chars=_MAX_LABEL_PREFIX_CHARS)
 
-        is_label = (
-            label_match is not None
-            and order is not None
-            and label_match.start() <= _MAX_LABEL_PREFIX_CHARS
-        )
-
-        if is_label:
-            prefix_before = combined[: label_match.start()].strip()
-            remainder = label_match.group("rest").strip()
-            title = f"{prefix_before} {remainder}".strip() if prefix_before else remainder
+        if label is not None:
+            prefix_before = combined[: label.start].strip()
+            title = (
+                f"{prefix_before} {label.remainder}".strip()
+                if prefix_before
+                else label.remainder
+            )
             title = title or combined
 
-            if label_match.group("kind") == "فصل":
-                current_chapter = ChapterOutline(order=order, title=title, page=page)
+            if label.kind == "فصل":
+                current_chapter = ChapterOutline(
+                    order=label.order, title=title, page=page
+                )
                 chapters.append(current_chapter)
                 current_lesson = None
             else:  # "درس"
-                current_lesson = LessonOutline(order=order, title=title, page=page)
+                current_lesson = LessonOutline(
+                    order=label.order, title=title, page=page
+                )
                 if current_chapter is not None:
                     current_chapter.lessons.append(current_lesson)
         elif current_lesson is not None:

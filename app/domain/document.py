@@ -94,3 +94,31 @@ class KnowledgeDocument(BaseModel):
     @property
     def pages_needing_review(self) -> int:
         return sum(1 for page in self.pages if page.needs_review)
+
+
+class LessonTextExtract(BaseModel):
+    """The text content belonging to one lesson, resolved from the book's
+    outline (see BookOutline in app/domain/outline.py) against this
+    document's actual PDF pages. This is the unit concept extraction
+    (see app/application/ports.py: ConceptRelationExtractorPort) operates
+    on — a whole book is too large for one LLM call to reason about
+    coherently, and a single raw page is too small to capture a lesson's
+    concepts (which routinely span several pages).
+
+    start_page/end_page are the PDF's absolute page index (1-based),
+    already resolved from the outline's book-printed page numbers — see
+    app/application/use_cases/build_lesson_extracts.py for how that offset
+    is computed.
+    """
+
+    book_title: str
+    course: Optional[str] = None
+    grade: Optional[str] = None
+    chapter_order: int
+    chapter_title: str
+    lesson_order: int
+    lesson_title: str
+    start_page: int
+    end_page: int
+    text: str
+    source_refs: list[SourceRef] = Field(default_factory=list)
