@@ -17,6 +17,17 @@ class Pipeline(Generic[ContextT]):
 
     def run(self, context: ContextT) -> ContextT:
         for stage in self.stages:
+            cancellation_callback = getattr(context, "cancellation_callback", None)
+            if callable(cancellation_callback) and cancellation_callback():
+                from app.core.exceptions import ProcessingCancelledError
+
+                raise ProcessingCancelledError(
+                    f"Processing cancelled before stage: {stage.name}"
+                )
+
             app_logger.info("Running pipeline stage: %s", stage.name)
+            progress_callback = getattr(context, "progress_callback", None)
+            if callable(progress_callback):
+                progress_callback(stage.name)
             context = stage.run(context)
         return context

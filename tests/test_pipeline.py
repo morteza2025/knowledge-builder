@@ -21,7 +21,9 @@ from app.infrastructure.exporter.knowledge_graph_exporter import KnowledgeGraphE
 
 
 class FakeTextExtractor(TextExtractionPort):
-    def extract_pages(self, pdf_path: Path) -> list[DocumentPage]:
+    def extract_pages(
+        self, pdf_path: Path, *, use_ocr: bool | None = None
+    ) -> list[DocumentPage]:
         return [
             DocumentPage(
                 page_number=1,
@@ -74,6 +76,35 @@ def test_process_book_pipeline_builds_document_and_exports():
     assert "FakeExporter" in result.export_paths
 
 
+def test_process_book_pipeline_forwards_per_run_ocr_flag():
+    class RecordingTextExtractor(FakeTextExtractor):
+        def __init__(self):
+            self.use_ocr_values: list[bool | None] = []
+
+        def extract_pages(
+            self, pdf_path: Path, *, use_ocr: bool | None = None
+        ) -> list[DocumentPage]:
+            self.use_ocr_values.append(use_ocr)
+            return super().extract_pages(pdf_path, use_ocr=use_ocr)
+
+    extractor = RecordingTextExtractor()
+    use_case = build_default_process_book_use_case(
+        text_extractor=extractor,
+        exporters=[FakeExporter()],
+    )
+
+    use_case.execute(
+        ProcessingContext(
+            pdf_path=Path("fake.pdf"),
+            filename="fake.pdf",
+            book_title="Fake book",
+            use_ocr=False,
+        )
+    )
+
+    assert extractor.use_ocr_values == [False]
+
+
 def test_concept_extraction_is_skipped_by_default_even_with_a_fake_extractor():
     """extract_concepts defaults to False -- the stage must not run at all,
     not even calling the (fake, harmless) extractor."""
@@ -103,7 +134,9 @@ class _OutlinedTextExtractor(TextExtractionPort):
     to succeed for real (not mocked) — so this test exercises the actual
     outline -> lesson-extract -> concept-extraction wiring end to end."""
 
-    def extract_pages(self, pdf_path: Path) -> list[DocumentPage]:
+    def extract_pages(
+        self, pdf_path: Path, *, use_ocr: bool | None = None
+    ) -> list[DocumentPage]:
         toc_text = (
             "فهرست\n"
             "فصل اول: عنوان فصل .............. 1\n"

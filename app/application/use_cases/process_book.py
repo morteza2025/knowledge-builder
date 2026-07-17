@@ -8,7 +8,7 @@ orchestration logic or the stages that already work.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from app.application.pipeline.pipeline import Pipeline
 from app.application.pipeline.stage import PipelineStage
@@ -35,7 +35,7 @@ class ProcessingContext:
     book_title: str
     course: Optional[str] = None
     grade: Optional[str] = None
-    use_ocr: bool = True
+    use_ocr: bool = settings.ocr_enabled
     extract_concepts: bool = False
 
     pages: list = field(default_factory=list)
@@ -44,6 +44,12 @@ class ProcessingContext:
     knowledge_graph: Optional[KnowledgeGraph] = None
     export_paths: dict[str, Path] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    progress_callback: Optional[Callable[[str], None]] = field(
+        default=None, repr=False
+    )
+    cancellation_callback: Optional[Callable[[], bool]] = field(
+        default=None, repr=False
+    )
 
 
 class ExtractPagesStage(PipelineStage[ProcessingContext]):
@@ -53,7 +59,9 @@ class ExtractPagesStage(PipelineStage[ProcessingContext]):
         self._text_extractor = text_extractor
 
     def run(self, context: ProcessingContext) -> ProcessingContext:
-        context.pages = self._text_extractor.extract_pages(context.pdf_path)
+        context.pages = self._text_extractor.extract_pages(
+            context.pdf_path, use_ocr=context.use_ocr
+        )
         return context
 
 
@@ -73,10 +81,17 @@ class BuildDocumentStage(PipelineStage[ProcessingContext]):
         warnings = list(context.warnings)
         pages_without_text = sum(1 for p in context.pages if p.char_count == 0)
         if pages_without_text:
-            warnings.append(
-                f"{pages_without_text} page(s) had no extractable text even "
-                "after OCR fallback and may need manual review."
-            )
+            if context.use_ocr:
+                warnings.append(
+                    f"{pages_without_text} page(s) had no extractable text even "
+                    "after OCR fallback and may need manual review."
+                )
+            else:
+                warnings.append(
+                    f"{pages_without_text} page(s) had no extractable text; "
+                    "OCR was disabled for this run and the page(s) may need "
+                    "manual review."
+                )
 
         context.document = KnowledgeDocument(
             metadata=metadata,

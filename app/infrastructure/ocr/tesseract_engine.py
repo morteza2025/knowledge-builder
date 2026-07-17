@@ -1,6 +1,6 @@
 """
 OCR fallback for pages with no usable text layer (scanned/photographed
-pages). Uses Tesseract with the Persian ('fas') language pack.
+pages). Uses Tesseract with configurable Persian/English language packs.
 
 Setup this required on the host machine (not a Python dependency alone):
   sudo apt-get install tesseract-ocr tesseract-ocr-fas
@@ -12,11 +12,14 @@ text pdfplumber found, flagged with a warning) rather than crashing.
 """
 
 from functools import lru_cache
+import statistics
 
-from PIL import Image
+from PIL import Image, ImageOps
 
-from app.application.ports import OCREnginePort
+from app.application.ports import OCREnginePort, OCRExtractionResult
 from app.core.logger import app_logger
+from app.core.settings import settings
+from app.infrastructure.text.persian_cleaner import clean_persian_text
 
 try:
     import pytesseract
@@ -28,6 +31,17 @@ except ImportError as exc:  # pragma: no cover - environment dependent
 
 
 class TesseractOCREngine(OCREnginePort):
+    def __init__(
+        self,
+        *,
+        psm: int = settings.ocr_tesseract_psm,
+        preprocessing_mode: str = settings.ocr_preprocessing_mode,
+        threshold: int | None = settings.ocr_threshold,
+    ):
+        self._config = f"--psm {psm}"
+        self._preprocessing_mode = preprocessing_mode
+        self._threshold = threshold
+
     @lru_cache(maxsize=1)
     def is_available(self) -> bool:
         if pytesseract is None:
@@ -43,17 +57,62 @@ class TesseractOCREngine(OCREnginePort):
             app_logger.warning("Tesseract binary not found or broken: %s", exc)
             return False
 
-        if "fas" not in langs:
+        required_languages = {
+            part.strip() for part in settings.ocr_language.split("+") if part.strip()
+        }
+        missing_languages = required_languages.difference(langs)
+        if missing_languages:
             app_logger.warning(
-                "Tesseract is installed but the Persian ('fas') language "
-                "pack is missing. Install it with: "
-                "sudo apt-get install tesseract-ocr-fas"
+                "Tesseract language packs are missing: %s. Install Persian "
+                "with: sudo apt-get install tesseract-ocr-fas",
+                ", ".join(sorted(missing_languages)),
             )
             return False
 
         return True
 
-    def extract_text(self, image: Image.Image, language: str = "fas") -> str:
+    def _preprocess(self, image: Image.Image) -> Image.Image:
+        if self._preprocessing_mode == "none":
+            processed = image.convert("RGB")
+        else:
+            processed = ImageOps.grayscale(image)
+            if self._preprocessing_mode == "autocontrast":
+                processed = ImageOps.autocontrast(processed)
+        if self._threshold is not None:
+            threshold = self._threshold
+            processed = processed.point(lambda value: 255 if value >= threshold else 0)
+        return processed
+
+    def extract_text(self, image: Image.Image, language: str = "fas+eng") -> str:
+        return self.extract_with_quality(image, language).text
+
+    def extract_with_quality(
+        self, image: Image.Image, language: str = "fas+eng"
+    ) -> OCRExtractionResult:
         if pytesseract is None:
             raise RuntimeError("pytesseract is not installed")
-        return pytesseract.image_to_string(image, lang=language)
+        processed = self._preprocess(image)
+        text = pytesseract.image_to_string(
+            processed, lang=language, config=self._config
+        )
+        data = pytesseract.image_to_data(
+            processed,
+            lang=language,
+            config=self._config,
+            output_type=pytesseract.Output.DICT,
+        )
+        confidence_values = []
+        for raw_value in data.get("conf", []):
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if value >= 0:
+                confidence_values.append(value)
+
+        confidence = (
+            statistics.fmean(confidence_values) if confidence_values else None
+        )
+        return OCRExtractionResult(
+            text=clean_persian_text(text), confidence=confidence
+        )

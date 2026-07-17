@@ -3,6 +3,7 @@ from typing import Optional
 from pydantic import BaseModel, field_validator
 
 from app.core.encoding_guard import assert_clean_text
+from app.core.settings import settings
 
 
 class ProcessRequest(BaseModel):
@@ -10,7 +11,7 @@ class ProcessRequest(BaseModel):
     book_title: Optional[str] = None
     course: Optional[str] = None
     grade: Optional[str] = None
-    use_ocr: bool = True
+    use_ocr: bool = settings.ocr_enabled
     extract_concepts: bool = False
 
     @field_validator("book_title", "course", "grade")
@@ -44,7 +45,7 @@ class ProcessResult(BaseModel):
 
 class BatchProcessRequest(BaseModel):
     filenames: Optional[list[str]] = None
-    use_ocr: bool = True
+    use_ocr: bool = settings.ocr_enabled
     extract_concepts: bool = False
 
     @field_validator("filenames")

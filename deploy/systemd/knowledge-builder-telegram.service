@@ -1,0 +1,26 @@
+[Unit]
+Description=EduLeague Knowledge Builder Telegram Bot
+After=network-online.target telegram-bot-api.service
+Requires=telegram-bot-api.service
+
+[Service]
+Type=simple
+User=knowledge-builder
+Group=knowledge-builder
+WorkingDirectory=/opt/knowledge-builder
+EnvironmentFile=/etc/knowledge-builder/telegram.env
+ExecStart=/opt/knowledge-builder/.venv/bin/python telegram_bot.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/knowledge-builder/input /opt/knowledge-builder/outputs /opt/knowledge-builder/workspaces /opt/knowledge-builder/logs
+MemoryMax=6G
+CPUQuota=300%
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

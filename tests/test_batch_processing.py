@@ -14,7 +14,9 @@ class FakeTextExtractor(TextExtractionPort):
     def __init__(self, fail_for: frozenset = frozenset()):
         self._fail_for = fail_for
 
-    def extract_pages(self, pdf_path: Path) -> list[DocumentPage]:
+    def extract_pages(
+        self, pdf_path: Path, *, use_ocr: bool | None = None
+    ) -> list[DocumentPage]:
         if pdf_path.name in self._fail_for:
             raise PDFExtractionError(f"simulated failure for {pdf_path.name}")
         return [

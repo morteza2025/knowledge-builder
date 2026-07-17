@@ -8,6 +8,7 @@ adapter — no changes needed in application or domain code.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -17,11 +18,25 @@ from app.domain.concept import ConceptRelationship, EducationalConcept
 from app.domain.document import DocumentPage, KnowledgeDocument, LessonTextExtract
 
 
+@dataclass(frozen=True)
+class OCRExtractionResult:
+    text: str
+    confidence: Optional[float] = None
+
+
 class TextExtractionPort(ABC):
     """Produces per-page text + metadata from a source PDF."""
 
     @abstractmethod
-    def extract_pages(self, pdf_path: Path) -> list[DocumentPage]:
+    def extract_pages(
+        self, pdf_path: Path, *, use_ocr: Optional[bool] = None
+    ) -> list[DocumentPage]:
+        """Extract pages from ``pdf_path``.
+
+        ``use_ocr`` is a per-run override. ``None`` preserves the adapter's
+        configured default, while ``False`` lets API/CLI callers disable an
+        otherwise-enabled OCR fallback for one request.
+        """
         ...
 
 
@@ -37,6 +52,13 @@ class OCREnginePort(ABC):
     @abstractmethod
     def extract_text(self, image: Image.Image, language: str) -> str:
         ...
+
+    def extract_with_quality(
+        self, image: Image.Image, language: str
+    ) -> OCRExtractionResult:
+        """Quality-aware OCR with a backward-compatible default adapter."""
+
+        return OCRExtractionResult(text=self.extract_text(image, language))
 
 
 class ExporterPort(ABC):
