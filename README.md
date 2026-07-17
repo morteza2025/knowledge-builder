@@ -399,3 +399,20 @@ during structural block detection.
   different heading label, etc.) won't parse until that variant is seen
   and handled.
 - `field` (subject track) is not inferred — see above.
+
+## Telegram bot interface
+
+The optional Telegram adapter accepts direct or forwarded PDFs, places them
+in a bounded persistent queue, and processes them through the same
+`ProcessBookUseCase` used by the API and CLI. Large (200–300 MB) documents
+require a self-hosted Telegram Local Bot API Server running with `--local`.
+
+```bash
+python telegram_bot.py
+```
+
+The bot fails closed unless `TELEGRAM_BOT_TOKEN` and a valid
+`TELEGRAM_ALLOWED_USER_IDS` allowlist are supplied at runtime. Tokens are
+stored as `SecretStr` and must never be committed. See
+[`docs/telegram-bot.md`](docs/telegram-bot.md) for Local Bot API migration,
+Docker Compose, systemd, Tesseract, security, testing, and operations.
