@@ -9,6 +9,7 @@ from app.interfaces.telegram.document_ingestion import TelegramDocumentIngestion
 from app.interfaces.telegram.handlers import TelegramHandlers
 from app.interfaces.telegram.job_models import TelegramJob
 from app.interfaces.telegram.job_repository import SQLiteJobRepository
+from app.interfaces.telegram.messages import NON_PDF_TEXT
 from app.interfaces.telegram.security import AuthorizationPolicy, TelegramSecurityError
 
 
@@ -180,10 +181,10 @@ class FakeQueue:
         self.submitted.append(job_id)
 
 
-def _document():
+def _document(*, filename="book.pdf", mime_type="application/pdf"):
     return SimpleNamespace(
-        file_name="book.pdf",
-        mime_type="application/pdf",
+        file_name=filename,
+        mime_type=mime_type,
         file_size=14,
         file_id="file-id",
         file_unique_id="unique",
@@ -220,6 +221,47 @@ def test_direct_and_forwarded_documents_share_the_same_acceptance_path(
     assert job.source_type == ("forwarded" if forwarded else "direct")
     assert job.book_title == "جامعه‌شناسی ۱"
     assert queue.submitted == [job.id]
+    repository.close()
+
+
+def test_pdf_extension_with_missing_mime_uses_standard_document_path(tmp_path):
+    settings = _settings(tmp_path)
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    queue = FakeQueue()
+    handlers = TelegramHandlers(
+        settings=settings,
+        repository=repository,
+        queue=queue,
+        authorization=AuthorizationPolicy((123,)),
+    )
+    message = FakeMessage(_document(mime_type=None))
+
+    asyncio.run(handlers.document(_update(message), None))
+
+    job = repository.latest_for_user(123)
+    assert job is not None
+    assert job.filename == "book.pdf"
+    assert queue.submitted == [job.id]
+    repository.close()
+
+
+def test_non_pdf_document_is_rejected_by_metadata_validation(tmp_path):
+    settings = _settings(tmp_path)
+    repository = SQLiteJobRepository(tmp_path / "jobs.sqlite3")
+    queue = FakeQueue()
+    handlers = TelegramHandlers(
+        settings=settings,
+        repository=repository,
+        queue=queue,
+        authorization=AuthorizationPolicy((123,)),
+    )
+    message = FakeMessage(_document(filename="notes.txt", mime_type="text/plain"))
+
+    asyncio.run(handlers.document(_update(message), None))
+
+    assert repository.latest_for_user(123) is None
+    assert queue.submitted == []
+    assert message.replies == [NON_PDF_TEXT]
     repository.close()
 
 

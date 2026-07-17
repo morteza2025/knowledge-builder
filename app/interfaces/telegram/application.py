@@ -114,10 +114,7 @@ def build_telegram_application(settings: Settings) -> tuple[Application, Telegra
     application.add_handler(CommandHandler("status", runtime.handlers.status))
     application.add_handler(CommandHandler("cancel", runtime.handlers.cancel))
     application.add_handler(
-        MessageHandler(filters.Document.PDF, runtime.handlers.document)
-    )
-    application.add_handler(
-        MessageHandler(filters.Document.ALL, runtime.handlers.unknown_document)
+        MessageHandler(filters.Document.ALL, runtime.handlers.document)
     )
     return application, runtime
 

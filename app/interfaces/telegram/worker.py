@@ -122,7 +122,18 @@ class TelegramJobWorker:
                 warnings=document.warnings,
             )
             await self._edit_status(bot, job)
-            await self._delivery.deliver(bot, job)
+            try:
+                await self._delivery.deliver(bot, job)
+            except Exception:
+                app_logger.exception(
+                    "Telegram delivery failed for completed job %s", job.id
+                )
+                warnings = list(job.warnings)
+                if "TELEGRAM_DELIVERY_FAILED" not in warnings:
+                    warnings.append("TELEGRAM_DELIVERY_FAILED")
+                job = self._repository.update(job.id, warnings=warnings)
+                await self._edit_delivery_failed_status(bot, job)
+                return job
             app_logger.info(
                 "Telegram job %s completed: pages=%s ocr_pages=%s warnings=%s",
                 job.id,
@@ -176,6 +187,23 @@ class TelegramJobWorker:
             )
         except Exception:
             app_logger.debug("Could not edit Telegram status for job %s", job.id)
+
+    async def _edit_delivery_failed_status(self, bot, job: TelegramJob) -> None:
+        if job.status_message_id is None:
+            return
+        from app.interfaces.telegram.messages import DELIVERY_FAILED_TEXT
+
+        try:
+            await bot.edit_message_text(
+                chat_id=job.chat_id,
+                message_id=job.status_message_id,
+                text=DELIVERY_FAILED_TEXT,
+            )
+        except Exception:
+            app_logger.debug(
+                "Could not edit Telegram delivery failure status for job %s",
+                job.id,
+            )
 
     async def _edit_current_status(self, bot, job_id: str) -> None:
         job = self._repository.get(job_id)

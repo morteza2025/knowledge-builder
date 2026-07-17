@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from telegram.ext import MessageHandler, filters
 
 from app.core.settings import Settings
 from app.interfaces.telegram.application import (
@@ -68,6 +69,21 @@ def test_api_base_urls_use_ptb_token_append_contract(tmp_path):
             "http://127.0.0.1:8081/file/bot"
         )
         assert application.bot.local_mode is True
+    finally:
+        runtime.repository.close()
+
+
+def test_application_registers_one_handler_for_all_documents(tmp_path):
+    application, runtime = build_telegram_application(_settings(tmp_path))
+    try:
+        document_handlers = [
+            handler
+            for group in application.handlers.values()
+            for handler in group
+            if isinstance(handler, MessageHandler)
+        ]
+        assert len(document_handlers) == 1
+        assert document_handlers[0].filters is filters.Document.ALL
     finally:
         runtime.repository.close()
 
