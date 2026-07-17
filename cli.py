@@ -53,7 +53,7 @@ def _build_context(
         book_title=resolved_title,
         course=resolved_course,
         grade=resolved_grade,
-        use_ocr=use_ocr,
+        use_ocr=use_ocr and settings.ocr_enabled,
         extract_concepts=extract_concepts,
     )
 

@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
+from app.api.routes import _build_context
 from app.api.dependencies import resolve_book_metadata
+from app.core.settings import settings
 
 
 def test_resolve_book_metadata_prefers_explicit_over_sidecar(tmp_path: Path):
@@ -30,3 +32,18 @@ def test_resolve_book_metadata_falls_back_to_filename_stem(tmp_path: Path):
     assert title == "unlabeled_book"
     assert course is None
     assert grade is None
+
+
+def test_global_ocr_switch_cannot_be_overridden_per_request(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "input_dir", tmp_path)
+    monkeypatch.setattr(settings, "ocr_enabled", False)
+
+    context = _build_context(
+        filename="book.pdf",
+        book_title=None,
+        course=None,
+        grade=None,
+        use_ocr=True,
+    )
+
+    assert context.use_ocr is False

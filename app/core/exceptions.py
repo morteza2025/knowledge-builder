@@ -28,3 +28,7 @@ class ConceptExtractionNotConfiguredError(KnowledgeBuilderError):
     pipeline works without it. Lives here (not in the infrastructure LLM
     adapter that raises it) so the application layer can catch it
     specifically without importing anything infrastructure-specific."""
+
+
+class ProcessingCancelledError(KnowledgeBuilderError):
+    """Raised cooperatively between safe pipeline stage boundaries."""

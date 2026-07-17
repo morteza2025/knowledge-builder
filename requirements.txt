@@ -26,3 +26,6 @@ anthropic>=0.34
 # --- Testing ---
 pytest>=8.0
 httpx>=0.27
+
+# --- Telegram interface (asynchronous; supports Local Bot API Server) ---
+python-telegram-bot>=21,<23

@@ -32,7 +32,7 @@ class PdfPlumberTextExtractor(TextExtractionPort):
     def __init__(
         self,
         ocr_engine: Optional[OCREnginePort] = None,
-        use_ocr: bool = True,
+        use_ocr: bool = settings.ocr_enabled,
         min_chars_for_valid_page: int = settings.min_text_chars_for_valid_page,
         ocr_language: str = settings.ocr_language,
         ocr_resolution: int = settings.ocr_render_resolution,
@@ -45,8 +45,14 @@ class PdfPlumberTextExtractor(TextExtractionPort):
         self._ocr_resolution = ocr_resolution
         self._max_pages = max_pages
 
-    def extract_pages(self, pdf_path: Path) -> list[DocumentPage]:
+    def extract_pages(
+        self, pdf_path: Path, *, use_ocr: Optional[bool] = None
+    ) -> list[DocumentPage]:
         self._validate_path(pdf_path)
+        # The adapter-level setting is the master switch. A caller may
+        # disable OCR for one run, but cannot re-enable an adapter that was
+        # deliberately constructed with OCR disabled.
+        run_ocr = self._use_ocr and use_ocr is not False
 
         try:
             with pdfplumber.open(pdf_path) as pdf:
@@ -91,6 +97,7 @@ class PdfPlumberTextExtractor(TextExtractionPort):
                             page_number,
                             pages_lines[page_number],
                             baseline_size,
+                            run_ocr,
                         )
                     )
 
@@ -107,6 +114,7 @@ class PdfPlumberTextExtractor(TextExtractionPort):
         page_number: int,
         lines: list[LineInfo],
         baseline_size: float,
+        use_ocr: bool,
     ) -> DocumentPage:
         warnings: list[str] = []
         method = ExtractionMethod.pdfplumber_positional
@@ -125,7 +133,7 @@ class PdfPlumberTextExtractor(TextExtractionPort):
         if method != ExtractionMethod.failed and len(cleaned) < self._min_chars:
             warnings.append("LOW_TEXT_MAY_NEED_OCR")
             cleaned, method, warnings, needs_review = self._maybe_run_ocr(
-                page, page_number, cleaned, method, warnings
+                page, page_number, cleaned, method, warnings, use_ocr
             )
 
         if method != ExtractionMethod.failed and not cleaned:
@@ -164,20 +172,37 @@ class PdfPlumberTextExtractor(TextExtractionPort):
             blocks=blocks,
         )
 
-    def _maybe_run_ocr(self, page, page_number, cleaned, method, warnings):
+    def _maybe_run_ocr(
+        self, page, page_number, cleaned, method, warnings, use_ocr: bool
+    ):
         needs_review = len(cleaned) < self._min_chars
 
-        if not (self._use_ocr and self._ocr_engine and self._ocr_engine.is_available()):
-            if self._use_ocr and self._ocr_engine and not self._ocr_engine.is_available():
-                warnings.append("OCR_UNAVAILABLE_ON_THIS_MACHINE")
+        if not use_ocr:
+            return cleaned, method, warnings, needs_review
+
+        if not self._ocr_engine:
+            return cleaned, method, warnings, needs_review
+
+        if not self._ocr_engine.is_available():
+            warnings.append("OCR_UNAVAILABLE_ON_THIS_MACHINE")
             return cleaned, method, warnings, needs_review
 
         try:
             image = page.to_image(resolution=self._ocr_resolution).original
-            ocr_raw = self._ocr_engine.extract_text(image, self._ocr_language)
-            ocr_cleaned = clean_persian_text(ocr_raw)
+            ocr_result = self._ocr_engine.extract_with_quality(
+                image, self._ocr_language
+            )
+            ocr_cleaned = clean_persian_text(ocr_result.text)
 
             if len(ocr_cleaned) > len(cleaned):
+                if (
+                    ocr_result.confidence is not None
+                    and ocr_result.confidence
+                    < settings.ocr_low_confidence_threshold
+                ):
+                    warnings.append(
+                        f"OCR_LOW_CONFIDENCE:{ocr_result.confidence:.1f}"
+                    )
                 warnings.append("RECOVERED_VIA_OCR")
                 return (
                     ocr_cleaned,

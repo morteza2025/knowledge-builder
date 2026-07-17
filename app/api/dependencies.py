@@ -7,6 +7,7 @@ from app.application.use_cases.process_book import (
     ProcessBookUseCase,
     build_default_process_book_use_case,
 )
+from app.core.settings import settings
 from app.infrastructure.exporter.json_exporter import JsonExporter
 from app.infrastructure.exporter.markdown_exporter import MarkdownExporter
 from app.infrastructure.ocr.tesseract_engine import TesseractOCREngine
@@ -16,7 +17,10 @@ from app.infrastructure.pdf.pdfplumber_engine import PdfPlumberTextExtractor
 @lru_cache(maxsize=1)
 def get_process_book_use_case() -> ProcessBookUseCase:
     ocr_engine = TesseractOCREngine()
-    text_extractor = PdfPlumberTextExtractor(ocr_engine=ocr_engine)
+    text_extractor = PdfPlumberTextExtractor(
+        ocr_engine=ocr_engine,
+        use_ocr=settings.ocr_enabled,
+    )
     exporters = [JsonExporter(), MarkdownExporter()]
 
     return build_default_process_book_use_case(

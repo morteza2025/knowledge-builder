@@ -26,3 +26,13 @@ input/*
 .vscode/
 .idea/
 *.egg-info/
+
+# Telegram runtime state and Local Bot API data
+input/telegram/
+workspaces/
+telegram-bot-api-data/
+*.part
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.telegram.zip
